@@ -42,7 +42,7 @@ export default function MapEditor({ points, onMapClick, readonly }) {
   const positions = points.map((p) => [p.lat, p.lng]);
 
   return (
-    <MapContainer center={[48.15, 17.11]} zoom={13} className="map-container">
+    <MapContainer center={[48.15, 17.11]} zoom={13} className="map-container" style={{ width: '100%', height: '100%' }}>
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
