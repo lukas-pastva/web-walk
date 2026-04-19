@@ -8,7 +8,7 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
-# Stage 2: Final image with Node.js, Python, Chrome, and FFmpeg
+# Stage 2: Final image with Node.js, Python, and FFmpeg
 FROM node:20-slim
 
 # Install system dependencies
@@ -16,28 +16,10 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-venv \
-    chromium \
-    chromium-driver \
     ffmpeg \
-    fonts-liberation \
-    libnss3 \
-    libatk-bridge2.0-0 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    libpangocairo-1.0-0 \
-    libgtk-3-0 \
     supervisor \
     curl \
     && rm -rf /var/lib/apt/lists/*
-
-# Set Chrome environment variables for Selenium
-ENV CHROME_BIN=/usr/bin/chromium
-ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
 # Create app directory
 WORKDIR /app
@@ -66,7 +48,7 @@ COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Create data directory
-RUN mkdir -p /data/frames /data/videos
+RUN mkdir -p /data/frames /data/videos /data/jobs
 
 # Environment variables
 ENV NODE_ENV=production
