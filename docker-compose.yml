@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  web-walk:
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+    container_name: web-walk
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${OUTPUT_DIR:-./data}:/data
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - OUTPUT_DIR=/data
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - TZ=Europe/Bratislava
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
