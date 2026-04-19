@@ -1,15 +1,16 @@
 """
 Web Walk - Google Street View route video generator.
 
-Usage: python walker.py <job_id>
+Usage: python walker.py <walk_id>
 
-Reads job config from /data/jobs/<job_id>.json, downloads Street View images
-along the route, and stitches them into a timelapse video.
+Reads walk config from SQLite database, downloads Street View images
+along the multi-point route, and stitches them into a video.
 """
 
 import json
 import math
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -20,19 +21,47 @@ import requests
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/data")
 API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+DB_PATH = os.path.join(OUTPUT_DIR, "webwalk.db")
 
 
-def load_job(job_id):
-    path = Path(OUTPUT_DIR) / "jobs" / f"{job_id}.json"
-    with open(path) as f:
-        return json.load(f)
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
-def save_job(job):
-    path = Path(OUTPUT_DIR) / "jobs" / f"{job['id']}.json"
-    job["updatedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    with open(path, "w") as f:
-        json.dump(job, f, indent=2)
+def load_walk(walk_id):
+    conn = get_db()
+    walk = conn.execute("SELECT * FROM walks WHERE id = ?", (walk_id,)).fetchone()
+    if not walk:
+        raise Exception(f"Walk {walk_id} not found")
+    points = conn.execute(
+        "SELECT * FROM walk_points WHERE walk_id = ? ORDER BY sort_order",
+        (walk_id,),
+    ).fetchall()
+    conn.close()
+    return dict(walk), [dict(p) for p in points]
+
+
+def update_walk_status(walk_id, status, total_frames=0, downloaded_frames=0, error_message=None):
+    conn = get_db()
+    conn.execute(
+        """UPDATE walks SET status = ?, total_frames = ?, downloaded_frames = ?,
+           error_message = ?, updated_at = datetime('now') WHERE id = ?""",
+        (status, total_frames, downloaded_frames, error_message, walk_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def save_progress(walk_id, downloaded_frames):
+    conn = get_db()
+    conn.execute(
+        "UPDATE walks SET downloaded_frames = ?, updated_at = datetime('now') WHERE id = ?",
+        (downloaded_frames, walk_id),
+    )
+    conn.commit()
+    conn.close()
 
 
 def decode_polyline(encoded):
@@ -124,6 +153,26 @@ def get_directions(start_lat, start_lng, end_lat, end_lng):
     return data["routes"][0]["overview_polyline"]["points"]
 
 
+def get_multi_segment_route(points):
+    """Get route through multiple waypoints, returns combined polyline points."""
+    all_polyline_points = []
+
+    for i in range(len(points) - 1):
+        start = points[i]
+        end = points[i + 1]
+        print(f"  Segment {i+1}/{len(points)-1}: ({start['lat']},{start['lng']}) -> ({end['lat']},{end['lng']})")
+        encoded = get_directions(start["lat"], start["lng"], end["lat"], end["lng"])
+        segment_points = decode_polyline(encoded)
+
+        # Skip first point of subsequent segments to avoid duplicates
+        if all_polyline_points:
+            segment_points = segment_points[1:]
+
+        all_polyline_points.extend(segment_points)
+
+    return all_polyline_points
+
+
 def download_streetview(lat, lng, heading, output_path):
     """Download a Street View image. Returns True if image was saved."""
     url = "https://maps.googleapis.com/maps/api/streetview"
@@ -138,7 +187,6 @@ def download_streetview(lat, lng, heading, output_path):
     resp = requests.get(url, params=params, timeout=30)
     if resp.status_code != 200:
         return False
-    # Google returns a "no imagery" placeholder as a small image
     if len(resp.content) < 5000:
         return False
     with open(output_path, "wb") as f:
@@ -146,11 +194,18 @@ def download_streetview(lat, lng, heading, output_path):
     return True
 
 
-def make_video(frames_dir, output_path):
-    """Stitch frames into an MP4 video using FFmpeg."""
+def make_video(frames_dir, output_path, num_frames, duration_seconds):
+    """Stitch frames into an MP4 video using FFmpeg with target duration."""
+    # Calculate framerate to achieve target duration
+    framerate = max(1, round(num_frames / max(1, duration_seconds)))
+    # Clamp framerate to reasonable range
+    framerate = min(framerate, 60)
+
+    print(f"  Video: {num_frames} frames, {duration_seconds}s target, {framerate} fps")
+
     cmd = [
         "ffmpeg", "-y",
-        "-framerate", "24",
+        "-framerate", str(framerate),
         "-i", str(frames_dir / "%06d.jpg"),
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
@@ -161,48 +216,45 @@ def make_video(frames_dir, output_path):
     subprocess.run(cmd, check=True, capture_output=True)
 
 
-def main(job_id):
-    job = load_job(job_id)
-    job["status"] = "processing"
-    save_job(job)
+def main(walk_id):
+    walk, points = load_walk(walk_id)
 
-    frames_dir = Path(OUTPUT_DIR) / "frames" / job_id
+    if len(points) < 2:
+        update_walk_status(walk_id, "error", error_message="At least 2 points required")
+        sys.exit(1)
+
+    duration_seconds = walk.get("duration_seconds", 60)
+    update_walk_status(walk_id, "processing")
+
+    frames_dir = Path(OUTPUT_DIR) / "frames" / walk_id
     frames_dir.mkdir(parents=True, exist_ok=True)
-    video_path = Path(OUTPUT_DIR) / "videos" / f"{job_id}.mp4"
+    video_path = Path(OUTPUT_DIR) / "videos" / f"{walk_id}.mp4"
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        # 1. Get route
-        print(f"[{job_id}] Getting directions...")
-        encoded = get_directions(
-            job["startLat"], job["startLng"],
-            job["endLat"], job["endLng"]
-        )
-        polyline_points = decode_polyline(encoded)
-        print(f"[{job_id}] Route has {len(polyline_points)} polyline points")
+        # 1. Get multi-segment route
+        print(f"[{walk_id}] Getting directions for {len(points)} waypoints...")
+        polyline_points = get_multi_segment_route(points)
+        print(f"[{walk_id}] Route has {len(polyline_points)} polyline points")
 
         # 2. Interpolate points
-        points = interpolate_points(polyline_points, interval_m=15)
-        print(f"[{job_id}] Interpolated to {len(points)} points")
+        interpolated = interpolate_points(polyline_points, interval_m=15)
+        print(f"[{walk_id}] Interpolated to {len(interpolated)} points")
 
-        job["totalFrames"] = len(points)
-        job["downloadedFrames"] = 0
-        save_job(job)
+        update_walk_status(walk_id, "processing", total_frames=len(interpolated))
 
         # 3. Download Street View images
-        frame_num = 0
-
         def download_frame(args):
             idx, lat, lng, hdg, path = args
             return idx, download_streetview(lat, lng, hdg, path)
 
         tasks = []
-        for i in range(len(points)):
-            lat, lng = points[i]
-            if i < len(points) - 1:
-                hdg = bearing(lat, lng, points[i + 1][0], points[i + 1][1])
+        for i in range(len(interpolated)):
+            lat, lng = interpolated[i]
+            if i < len(interpolated) - 1:
+                hdg = bearing(lat, lng, interpolated[i + 1][0], interpolated[i + 1][1])
             else:
-                hdg = bearing(points[i - 1][0], points[i - 1][1], lat, lng) if i > 0 else 0
+                hdg = bearing(interpolated[i - 1][0], interpolated[i - 1][1], lat, lng) if i > 0 else 0
             frame_path = frames_dir / f"{i:06d}.jpg"
             tasks.append((i, lat, lng, hdg, str(frame_path)))
 
@@ -213,47 +265,40 @@ def main(job_id):
                 idx, success = future.result()
                 if success:
                     downloaded += 1
-                job["downloadedFrames"] = downloaded
                 if downloaded % 10 == 0:
-                    save_job(job)
+                    save_progress(walk_id, downloaded)
 
-        save_job(job)
-        print(f"[{job_id}] Downloaded {downloaded} frames")
+        save_progress(walk_id, downloaded)
+        print(f"[{walk_id}] Downloaded {downloaded} frames")
 
         if downloaded == 0:
             raise Exception("No Street View images found along this route")
 
-        # 4. Renumber frames sequentially (fill gaps from missing images)
+        # 4. Renumber frames sequentially
         existing = sorted(frames_dir.glob("*.jpg"))
         for new_idx, old_path in enumerate(existing):
             new_path = frames_dir / f"{new_idx:06d}.jpg"
             if old_path != new_path:
                 old_path.rename(new_path)
-        # Remove any leftover files with higher numbers
         for f in frames_dir.glob("*.jpg"):
             if int(f.stem) >= len(existing):
                 f.unlink()
 
-        # 5. Make video
-        print(f"[{job_id}] Creating video from {len(existing)} frames...")
-        make_video(frames_dir, video_path)
+        # 5. Make video with target duration
+        print(f"[{walk_id}] Creating video from {len(existing)} frames (target: {duration_seconds}s)...")
+        make_video(frames_dir, video_path, len(existing), duration_seconds)
 
-        job["status"] = "done"
-        job["totalFrames"] = len(existing)
-        job["downloadedFrames"] = len(existing)
-        save_job(job)
-        print(f"[{job_id}] Done! Video: {video_path}")
+        update_walk_status(walk_id, "done", total_frames=len(existing), downloaded_frames=len(existing))
+        print(f"[{walk_id}] Done! Video: {video_path}")
 
     except Exception as e:
-        print(f"[{job_id}] Error: {e}", file=sys.stderr)
-        job["status"] = "error"
-        job["errorMessage"] = str(e)
-        save_job(job)
+        print(f"[{walk_id}] Error: {e}", file=sys.stderr)
+        update_walk_status(walk_id, "error", error_message=str(e))
         sys.exit(1)
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: python walker.py <job_id>", file=sys.stderr)
+        print("Usage: python walker.py <walk_id>", file=sys.stderr)
         sys.exit(1)
     main(sys.argv[1])

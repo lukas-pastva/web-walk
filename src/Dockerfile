@@ -11,7 +11,7 @@ RUN npm run build
 # Stage 2: Final image with Node.js, Python, and FFmpeg
 FROM node:20-slim
 
-# Install system dependencies
+# Install system dependencies (including build tools for better-sqlite3)
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -19,6 +19,8 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     supervisor \
     curl \
+    build-essential \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
@@ -48,7 +50,7 @@ COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Create data directory
-RUN mkdir -p /data/frames /data/videos /data/jobs
+RUN mkdir -p /data/frames /data/videos
 
 # Environment variables
 ENV NODE_ENV=production

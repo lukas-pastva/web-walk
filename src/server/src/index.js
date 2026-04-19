@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
+const { db, stmts } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -18,7 +19,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, '../../frontend/dist')));
 
 // Ensure directories exist
-for (const dir of ['jobs', 'frames', 'videos']) {
+for (const dir of ['frames', 'videos']) {
   fs.mkdirSync(path.join(OUTPUT_DIR, dir), { recursive: true });
 }
 
@@ -27,34 +28,123 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Create a new walk job
-app.post('/api/walks', (req, res) => {
-  const { startLat, startLng, endLat, endLng } = req.body;
+// --- Walks CRUD ---
 
-  if (!startLat || !startLng || !endLat || !endLng) {
-    return res.status(400).json({ error: 'Missing coordinates' });
+// List all walks
+app.get('/api/walks', (req, res) => {
+  const walks = stmts.listWalks.all();
+  res.json(walks);
+});
+
+// Get single walk with points
+app.get('/api/walks/:id', (req, res) => {
+  const walk = stmts.getWalk.get(req.params.id);
+  if (!walk) return res.status(404).json({ error: 'Walk not found' });
+  walk.points = stmts.getPoints.all(walk.id);
+  res.json(walk);
+});
+
+// Create walk
+app.post('/api/walks', (req, res) => {
+  const { name, duration_seconds, points } = req.body;
+  if (!points || points.length < 2) {
+    return res.status(400).json({ error: 'At least 2 points required' });
   }
 
   const id = uuidv4();
-  const job = {
-    id,
-    status: 'pending',
-    startLat: parseFloat(startLat),
-    startLng: parseFloat(startLng),
-    endLat: parseFloat(endLat),
-    endLng: parseFloat(endLng),
-    totalFrames: 0,
-    downloadedFrames: 0,
-    errorMessage: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
+  const saveWalk = db.transaction(() => {
+    stmts.insertWalk.run({
+      id,
+      name: name || 'Untitled Walk',
+      duration_seconds: duration_seconds || 60,
+    });
+    for (let i = 0; i < points.length; i++) {
+      stmts.insertPoint.run({
+        walk_id: id,
+        sort_order: i,
+        lat: points[i].lat,
+        lng: points[i].lng,
+      });
+    }
+  });
+  saveWalk();
 
-  const jobPath = path.join(OUTPUT_DIR, 'jobs', `${id}.json`);
-  fs.writeFileSync(jobPath, JSON.stringify(job, null, 2));
+  const walk = stmts.getWalk.get(id);
+  walk.points = stmts.getPoints.all(id);
+  res.status(201).json(walk);
+});
+
+// Update walk
+app.put('/api/walks/:id', (req, res) => {
+  const walk = stmts.getWalk.get(req.params.id);
+  if (!walk) return res.status(404).json({ error: 'Walk not found' });
+  if (walk.status !== 'draft') {
+    return res.status(400).json({ error: 'Can only edit draft walks' });
+  }
+
+  const { name, duration_seconds, points } = req.body;
+
+  const updateWalk = db.transaction(() => {
+    stmts.updateWalk.run({
+      id: req.params.id,
+      name: name || walk.name,
+      duration_seconds: duration_seconds || walk.duration_seconds,
+    });
+    if (points) {
+      stmts.deletePoints.run(req.params.id);
+      for (let i = 0; i < points.length; i++) {
+        stmts.insertPoint.run({
+          walk_id: req.params.id,
+          sort_order: i,
+          lat: points[i].lat,
+          lng: points[i].lng,
+        });
+      }
+    }
+  });
+  updateWalk();
+
+  const updated = stmts.getWalk.get(req.params.id);
+  updated.points = stmts.getPoints.all(req.params.id);
+  res.json(updated);
+});
+
+// Delete walk
+app.delete('/api/walks/:id', (req, res) => {
+  const walk = stmts.getWalk.get(req.params.id);
+  if (!walk) return res.status(404).json({ error: 'Walk not found' });
+
+  stmts.deleteWalk.run(req.params.id);
+
+  // Cleanup files
+  const framesDir = path.join(OUTPUT_DIR, 'frames', req.params.id);
+  const videoPath = path.join(OUTPUT_DIR, 'videos', `${req.params.id}.mp4`);
+  if (fs.existsSync(framesDir)) fs.rmSync(framesDir, { recursive: true });
+  if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
+
+  res.json({ ok: true });
+});
+
+// Generate video for a walk
+app.post('/api/walks/:id/generate', (req, res) => {
+  const walk = stmts.getWalk.get(req.params.id);
+  if (!walk) return res.status(404).json({ error: 'Walk not found' });
+
+  const points = stmts.getPoints.all(req.params.id);
+  if (points.length < 2) {
+    return res.status(400).json({ error: 'At least 2 points required' });
+  }
+
+  stmts.updateWalkStatus.run({
+    id: req.params.id,
+    status: 'pending',
+    total_frames: 0,
+    downloaded_frames: 0,
+    error_message: null,
+  });
 
   // Spawn walker process
-  const child = spawn(PYTHON_PATH, [WALKER_SCRIPT, id], {
+  const child = spawn(PYTHON_PATH, [WALKER_SCRIPT, req.params.id], {
     env: {
       ...process.env,
       OUTPUT_DIR,
@@ -63,21 +153,11 @@ app.post('/api/walks', (req, res) => {
     stdio: 'pipe',
   });
 
-  child.stdout.on('data', (d) => console.log(`[walker:${id}] ${d.toString().trim()}`));
-  child.stderr.on('data', (d) => console.error(`[walker:${id}] ${d.toString().trim()}`));
-  child.on('close', (code) => console.log(`[walker:${id}] exited with code ${code}`));
+  child.stdout.on('data', (d) => console.log(`[walker:${req.params.id}] ${d.toString().trim()}`));
+  child.stderr.on('data', (d) => console.error(`[walker:${req.params.id}] ${d.toString().trim()}`));
+  child.on('close', (code) => console.log(`[walker:${req.params.id}] exited with code ${code}`));
 
-  res.status(201).json({ id });
-});
-
-// Get job status
-app.get('/api/walks/:id', (req, res) => {
-  const jobPath = path.join(OUTPUT_DIR, 'jobs', `${req.params.id}.json`);
-  if (!fs.existsSync(jobPath)) {
-    return res.status(404).json({ error: 'Job not found' });
-  }
-  const job = JSON.parse(fs.readFileSync(jobPath, 'utf8'));
-  res.json(job);
+  res.json({ status: 'started' });
 });
 
 // Stream video
@@ -87,16 +167,6 @@ app.get('/api/walks/:id/video', (req, res) => {
     return res.status(404).json({ error: 'Video not found' });
   }
   res.sendFile(videoPath);
-});
-
-// List all walks
-app.get('/api/walks', (req, res) => {
-  const jobsDir = path.join(OUTPUT_DIR, 'jobs');
-  const files = fs.readdirSync(jobsDir).filter(f => f.endsWith('.json'));
-  const jobs = files
-    .map(f => JSON.parse(fs.readFileSync(path.join(jobsDir, f), 'utf8')))
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  res.json(jobs);
 });
 
 // SPA fallback
