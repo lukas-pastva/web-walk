@@ -16,6 +16,9 @@ db.exec(`
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL DEFAULT 'Untitled Walk',
     duration_seconds INTEGER NOT NULL DEFAULT 60,
+    heading_offset REAL NOT NULL DEFAULT 0,
+    pitch REAL NOT NULL DEFAULT 0,
+    fov REAL NOT NULL DEFAULT 90,
     status TEXT NOT NULL DEFAULT 'draft',
     total_frames INTEGER NOT NULL DEFAULT 0,
     downloaded_frames INTEGER NOT NULL DEFAULT 0,
@@ -43,14 +46,21 @@ db.exec(`
   );
 `);
 
+// Migrate: add new columns if missing (for existing databases)
+try { db.exec("ALTER TABLE walks ADD COLUMN heading_offset REAL NOT NULL DEFAULT 0"); } catch (e) {}
+try { db.exec("ALTER TABLE walks ADD COLUMN pitch REAL NOT NULL DEFAULT 0"); } catch (e) {}
+try { db.exec("ALTER TABLE walks ADD COLUMN fov REAL NOT NULL DEFAULT 90"); } catch (e) {}
+
 // Prepared statements
 const stmts = {
   insertWalk: db.prepare(`
-    INSERT INTO walks (id, name, duration_seconds, status)
-    VALUES (@id, @name, @duration_seconds, 'draft')
+    INSERT INTO walks (id, name, duration_seconds, heading_offset, pitch, fov, status)
+    VALUES (@id, @name, @duration_seconds, @heading_offset, @pitch, @fov, 'draft')
   `),
   updateWalk: db.prepare(`
-    UPDATE walks SET name = @name, duration_seconds = @duration_seconds, updated_at = datetime('now')
+    UPDATE walks SET name = @name, duration_seconds = @duration_seconds,
+    heading_offset = @heading_offset, pitch = @pitch, fov = @fov,
+    updated_at = datetime('now')
     WHERE id = @id
   `),
   updateWalkStatus: db.prepare(`

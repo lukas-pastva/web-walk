@@ -46,7 +46,7 @@ app.get('/api/walks/:id', (req, res) => {
 
 // Create walk
 app.post('/api/walks', (req, res) => {
-  const { name, duration_seconds, points } = req.body;
+  const { name, duration_seconds, heading_offset, pitch, fov, points } = req.body;
   if (!points || points.length < 2) {
     return res.status(400).json({ error: 'At least 2 points required' });
   }
@@ -57,6 +57,9 @@ app.post('/api/walks', (req, res) => {
       id,
       name: name || 'Untitled Walk',
       duration_seconds: duration_seconds || 60,
+      heading_offset: heading_offset || 0,
+      pitch: pitch || 0,
+      fov: fov || 90,
     });
     for (let i = 0; i < points.length; i++) {
       stmts.insertPoint.run({
@@ -82,13 +85,16 @@ app.put('/api/walks/:id', (req, res) => {
     return res.status(400).json({ error: 'Can only edit draft walks' });
   }
 
-  const { name, duration_seconds, points } = req.body;
+  const { name, duration_seconds, heading_offset, pitch, fov, points } = req.body;
 
   const updateWalk = db.transaction(() => {
     stmts.updateWalk.run({
       id: req.params.id,
       name: name || walk.name,
       duration_seconds: duration_seconds || walk.duration_seconds,
+      heading_offset: heading_offset ?? walk.heading_offset ?? 0,
+      pitch: pitch ?? walk.pitch ?? 0,
+      fov: fov ?? walk.fov ?? 90,
     });
     if (points) {
       stmts.deletePoints.run(req.params.id);

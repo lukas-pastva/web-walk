@@ -9,6 +9,9 @@ export default function WalkEditor() {
 
   const [name, setName] = useState('');
   const [duration, setDuration] = useState(60);
+  const [headingOffset, setHeadingOffset] = useState(0);
+  const [pitch, setPitch] = useState(0);
+  const [fov, setFov] = useState(90);
   const [points, setPoints] = useState([]);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(isEdit);
@@ -20,6 +23,9 @@ export default function WalkEditor() {
       .then((walk) => {
         setName(walk.name);
         setDuration(walk.duration_seconds);
+        setHeadingOffset(walk.heading_offset || 0);
+        setPitch(walk.pitch || 0);
+        setFov(walk.fov || 90);
         setPoints(walk.points.map((p) => ({ lat: p.lat, lng: p.lng })));
         setLoading(false);
       });
@@ -40,6 +46,9 @@ export default function WalkEditor() {
     const body = {
       name: name || 'Untitled Walk',
       duration_seconds: parseInt(duration) || 60,
+      heading_offset: parseFloat(headingOffset) || 0,
+      pitch: parseFloat(pitch) || 0,
+      fov: parseFloat(fov) || 90,
       points,
     };
 
@@ -99,6 +108,51 @@ export default function WalkEditor() {
             />
             <span className="form-hint">
               {duration < 30 ? 'Fast' : duration < 120 ? 'Normal' : 'Slow'} playback
+            </span>
+          </div>
+
+          <div className="form-group">
+            <label>Heading Offset ({headingOffset}°)</label>
+            <input
+              type="range"
+              value={headingOffset}
+              onChange={(e) => setHeadingOffset(Number(e.target.value))}
+              min="-180"
+              max="180"
+              step="5"
+            />
+            <span className="form-hint">
+              {headingOffset === 0 ? 'Forward' : headingOffset < 0 ? `${Math.abs(headingOffset)}° Left` : `${headingOffset}° Right`}
+            </span>
+          </div>
+
+          <div className="form-group">
+            <label>Pitch ({pitch}°)</label>
+            <input
+              type="range"
+              value={pitch}
+              onChange={(e) => setPitch(Number(e.target.value))}
+              min="-90"
+              max="90"
+              step="5"
+            />
+            <span className="form-hint">
+              {pitch === 0 ? 'Straight ahead' : pitch < 0 ? `${Math.abs(pitch)}° Down` : `${pitch}° Up`}
+            </span>
+          </div>
+
+          <div className="form-group">
+            <label>Zoom / FOV ({fov}°)</label>
+            <input
+              type="range"
+              value={fov}
+              onChange={(e) => setFov(Number(e.target.value))}
+              min="20"
+              max="120"
+              step="5"
+            />
+            <span className="form-hint">
+              {fov <= 40 ? 'Zoomed in' : fov <= 80 ? 'Normal-close' : fov <= 100 ? 'Normal' : 'Wide angle'}
             </span>
           </div>
 

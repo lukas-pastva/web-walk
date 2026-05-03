@@ -215,15 +215,15 @@ def get_multi_segment_route(points, walk_id=None):
     return all_polyline_points
 
 
-def download_streetview(lat, lng, heading, output_path, walk_id=None):
+def download_streetview(lat, lng, heading, output_path, walk_id=None, pitch=0, fov=90):
     """Download a Street View image. Returns True if image was saved."""
     url = "https://maps.googleapis.com/maps/api/streetview"
     params = {
         "size": "640x640",
         "location": f"{lat},{lng}",
         "heading": f"{heading:.1f}",
-        "fov": "90",
-        "pitch": "0",
+        "fov": str(fov),
+        "pitch": str(pitch),
         "key": API_KEY,
     }
     resp = requests.get(url, params=params, timeout=30)
@@ -266,6 +266,9 @@ def main(walk_id):
         sys.exit(1)
 
     duration_seconds = walk.get("duration_seconds", 60)
+    heading_offset = walk.get("heading_offset", 0)
+    walk_pitch = walk.get("pitch", 0)
+    walk_fov = walk.get("fov", 90)
     update_walk_status(walk_id, "processing")
 
     frames_dir = Path(OUTPUT_DIR) / "frames" / walk_id
@@ -292,7 +295,7 @@ def main(walk_id):
         # 3. Download Street View images
         def download_frame(args):
             idx, lat, lng, hdg, path = args
-            return idx, download_streetview(lat, lng, hdg, path)
+            return idx, download_streetview(lat, lng, hdg, path, walk_id, walk_pitch, walk_fov)
 
         tasks = []
         for i in range(len(interpolated)):
@@ -301,6 +304,7 @@ def main(walk_id):
                 hdg = bearing(lat, lng, interpolated[i + 1][0], interpolated[i + 1][1])
             else:
                 hdg = bearing(interpolated[i - 1][0], interpolated[i - 1][1], lat, lng) if i > 0 else 0
+            hdg = (hdg + heading_offset) % 360
             frame_path = frames_dir / f"{i:06d}.jpg"
             tasks.append((i, lat, lng, hdg, str(frame_path)))
 

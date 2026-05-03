@@ -95,6 +95,18 @@ export default function WalkDetail() {
               <span>{walk.points?.length || 0}</span>
             </div>
             <div className="info-row">
+              <span className="info-label">Heading</span>
+              <span>{walk.heading_offset || 0}°</span>
+            </div>
+            <div className="info-row">
+              <span className="info-label">Pitch</span>
+              <span>{walk.pitch || 0}°</span>
+            </div>
+            <div className="info-row">
+              <span className="info-label">FOV (Zoom)</span>
+              <span>{walk.fov || 90}°</span>
+            </div>
+            <div className="info-row">
               <span className="info-label">Created</span>
               <span>{new Date(walk.created_at).toLocaleString()}</span>
             </div>
