@@ -16,6 +16,7 @@ export default function WalkEditor() {
   const [points, setPoints] = useState([]);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(isEdit);
+  const [walkStatus, setWalkStatus] = useState('draft');
 
   useEffect(() => {
     if (isEdit) {
@@ -29,6 +30,7 @@ export default function WalkEditor() {
           setFov(walk.fov || 90);
           setAspectRatio(walk.aspect_ratio || '1:1');
           setPoints(walk.points.map((p) => ({ lat: p.lat, lng: p.lng })));
+          setWalkStatus(walk.status);
           setLoading(false);
         });
     } else {
@@ -46,6 +48,8 @@ export default function WalkEditor() {
     }
   }, [id, isEdit]);
 
+  const isDraft = walkStatus === 'draft';
+
   const handleMapClick = useCallback((latlng) => {
     setPoints((prev) => [...prev, { lat: latlng.lat, lng: latlng.lng }]);
   }, []);
@@ -55,18 +59,22 @@ export default function WalkEditor() {
   }, []);
 
   const handleSave = async () => {
-    if (points.length < 2) return;
+    if (isDraft && points.length < 2) return;
     setSaving(true);
 
     const body = {
       name: name || 'Untitled Walk',
       duration_seconds: parseInt(duration) || 60,
-      heading_offset: parseFloat(headingOffset) || 0,
-      pitch: parseFloat(pitch) || 0,
-      fov: parseFloat(fov) || 90,
       aspect_ratio: aspectRatio,
-      points,
     };
+
+    // Only send route/camera params for draft walks
+    if (isDraft) {
+      body.heading_offset = parseFloat(headingOffset) || 0;
+      body.pitch = parseFloat(pitch) || 0;
+      body.fov = parseFloat(fov) || 90;
+      body.points = points;
+    }
 
     try {
       let resp;
@@ -77,6 +85,10 @@ export default function WalkEditor() {
           body: JSON.stringify(body),
         });
       } else {
+        body.heading_offset = parseFloat(headingOffset) || 0;
+        body.pitch = parseFloat(pitch) || 0;
+        body.fov = parseFloat(fov) || 90;
+        body.points = points;
         resp = await fetch('/api/walks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -99,6 +111,9 @@ export default function WalkEditor() {
     <div className="page editor-page">
       <div className="page-header">
         <h2>{isEdit ? 'Edit Walk' : 'New Walk'}</h2>
+        {isEdit && !isDraft && (
+          <span className="form-hint">Only name, duration and format can be changed after generating.</span>
+        )}
       </div>
 
       <div className="editor-layout">
@@ -128,51 +143,6 @@ export default function WalkEditor() {
           </div>
 
           <div className="form-group">
-            <label>Heading Offset ({headingOffset}°)</label>
-            <input
-              type="range"
-              value={headingOffset}
-              onChange={(e) => setHeadingOffset(Number(e.target.value))}
-              min="-180"
-              max="180"
-              step="5"
-            />
-            <span className="form-hint">
-              {headingOffset === 0 ? 'Forward' : headingOffset < 0 ? `${Math.abs(headingOffset)}° Left` : `${headingOffset}° Right`}
-            </span>
-          </div>
-
-          <div className="form-group">
-            <label>Pitch ({pitch}°)</label>
-            <input
-              type="range"
-              value={pitch}
-              onChange={(e) => setPitch(Number(e.target.value))}
-              min="-90"
-              max="90"
-              step="5"
-            />
-            <span className="form-hint">
-              {pitch === 0 ? 'Straight ahead' : pitch < 0 ? `${Math.abs(pitch)}° Down` : `${pitch}° Up`}
-            </span>
-          </div>
-
-          <div className="form-group">
-            <label>Zoom / FOV ({fov}°)</label>
-            <input
-              type="range"
-              value={fov}
-              onChange={(e) => setFov(Number(e.target.value))}
-              min="20"
-              max="120"
-              step="5"
-            />
-            <span className="form-hint">
-              {fov <= 40 ? 'Zoomed in' : fov <= 80 ? 'Normal-close' : fov <= 100 ? 'Normal' : 'Wide angle'}
-            </span>
-          </div>
-
-          <div className="form-group">
             <label>Video Format</label>
             <div className="aspect-ratio-options">
               {['1:1', '3:2', '4:3', '16:9'].map((ar) => (
@@ -191,35 +161,84 @@ export default function WalkEditor() {
             </span>
           </div>
 
-          <div className="form-group">
-            <label>Waypoints ({points.length})</label>
-            <div className="points-list">
-              {points.map((p, i) => (
-                <div key={i} className="point-item">
-                  <span className="point-number">{i + 1}</span>
-                  <span className="point-coords">
-                    {p.lat.toFixed(5)}, {p.lng.toFixed(5)}
-                  </span>
-                  <button
-                    className="btn-icon"
-                    onClick={() => handleRemovePoint(i)}
-                    title="Remove point"
-                  >
-                    &times;
-                  </button>
+          {isDraft && (
+            <>
+              <div className="form-group">
+                <label>Heading Offset ({headingOffset}°)</label>
+                <input
+                  type="range"
+                  value={headingOffset}
+                  onChange={(e) => setHeadingOffset(Number(e.target.value))}
+                  min="-180"
+                  max="180"
+                  step="5"
+                />
+                <span className="form-hint">
+                  {headingOffset === 0 ? 'Forward' : headingOffset < 0 ? `${Math.abs(headingOffset)}° Left` : `${headingOffset}° Right`}
+                </span>
+              </div>
+
+              <div className="form-group">
+                <label>Pitch ({pitch}°)</label>
+                <input
+                  type="range"
+                  value={pitch}
+                  onChange={(e) => setPitch(Number(e.target.value))}
+                  min="-90"
+                  max="90"
+                  step="5"
+                />
+                <span className="form-hint">
+                  {pitch === 0 ? 'Straight ahead' : pitch < 0 ? `${Math.abs(pitch)}° Down` : `${pitch}° Up`}
+                </span>
+              </div>
+
+              <div className="form-group">
+                <label>Zoom / FOV ({fov}°)</label>
+                <input
+                  type="range"
+                  value={fov}
+                  onChange={(e) => setFov(Number(e.target.value))}
+                  min="20"
+                  max="120"
+                  step="5"
+                />
+                <span className="form-hint">
+                  {fov <= 40 ? 'Zoomed in' : fov <= 80 ? 'Normal-close' : fov <= 100 ? 'Normal' : 'Wide angle'}
+                </span>
+              </div>
+
+              <div className="form-group">
+                <label>Waypoints ({points.length})</label>
+                <div className="points-list">
+                  {points.map((p, i) => (
+                    <div key={i} className="point-item">
+                      <span className="point-number">{i + 1}</span>
+                      <span className="point-coords">
+                        {p.lat.toFixed(5)}, {p.lng.toFixed(5)}
+                      </span>
+                      <button
+                        className="btn-icon"
+                        onClick={() => handleRemovePoint(i)}
+                        title="Remove point"
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  ))}
+                  {points.length === 0 && (
+                    <p className="form-hint">Click on the map to add waypoints</p>
+                  )}
                 </div>
-              ))}
-              {points.length === 0 && (
-                <p className="form-hint">Click on the map to add waypoints</p>
-              )}
-            </div>
-          </div>
+              </div>
+            </>
+          )}
 
           <div className="editor-actions">
             <button
               className="btn-primary"
               onClick={handleSave}
-              disabled={points.length < 2 || saving}
+              disabled={(isDraft && points.length < 2) || saving}
             >
               {saving ? 'Saving...' : isEdit ? 'Save Changes' : 'Create Walk'}
             </button>
@@ -229,9 +248,11 @@ export default function WalkEditor() {
           </div>
         </div>
 
-        <div className="editor-map">
-          <MapEditor points={points} onMapClick={handleMapClick} />
-        </div>
+        {isDraft && (
+          <div className="editor-map">
+            <MapEditor points={points} onMapClick={handleMapClick} />
+          </div>
+        )}
       </div>
     </div>
   );

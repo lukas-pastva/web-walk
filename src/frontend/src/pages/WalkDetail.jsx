@@ -294,7 +294,7 @@ export default function WalkDetail() {
       <div className="page-header">
         <h2>{walk.name}</h2>
         <div className="header-actions">
-          {walk.status === 'draft' && (
+          {!isProcessing && (
             <button className="btn-secondary" onClick={() => navigate(`/walk/${id}/edit`)}>
               Edit
             </button>

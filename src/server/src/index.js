@@ -98,11 +98,21 @@ app.put('/api/walks/:id', async (req, res) => {
     const [walks] = await pool.query('SELECT * FROM walks WHERE id = ?', [req.params.id]);
     if (!walks.length) return res.status(404).json({ error: 'Walk not found' });
     const walk = walks[0];
-    if (walk.status !== 'draft') {
-      return res.status(400).json({ error: 'Can only edit draft walks' });
-    }
+    const isDraft = walk.status === 'draft';
 
     const { name, duration_seconds, heading_offset, pitch, fov, aspect_ratio, points } = req.body;
+
+    // Non-draft walks: only allow name, duration, aspect_ratio changes
+    if (!isDraft && (points || heading_offset !== undefined || pitch !== undefined || fov !== undefined)) {
+      // Check if route/camera params actually changed
+      const routeChanged = !!points;
+      const cameraChanged = (heading_offset !== undefined && heading_offset !== walk.heading_offset) ||
+                            (pitch !== undefined && pitch !== walk.pitch) ||
+                            (fov !== undefined && fov !== walk.fov);
+      if (routeChanged || cameraChanged) {
+        return res.status(400).json({ error: 'Route and camera settings can only be changed on draft walks. Use Reprocess first.' });
+      }
+    }
 
     const conn = await pool.getConnection();
     try {
@@ -120,7 +130,7 @@ app.put('/api/walks/:id', async (req, res) => {
           req.params.id,
         ]
       );
-      if (points) {
+      if (points && isDraft) {
         await conn.query('DELETE FROM walk_points WHERE walk_id = ?', [req.params.id]);
         for (let i = 0; i < points.length; i++) {
           await conn.query(
