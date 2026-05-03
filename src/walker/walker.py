@@ -68,6 +68,27 @@ def update_walk_status(walk_id, status, total_frames=0, downloaded_frames=0, err
     conn.close()
 
 
+def log_message(walk_id, message, level="info"):
+    """Log a message to both stdout and database."""
+    prefix = f"[{walk_id}]"
+    if level == "error":
+        print(f"{prefix} ERROR: {message}", file=sys.stderr)
+    else:
+        print(f"{prefix} {message}")
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO walk_logs (walk_id, level, message) VALUES (%s, %s, %s)",
+            (walk_id, level, message),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception:
+        pass  # Don't fail the walk if logging fails
+
+
 def save_progress(walk_id, downloaded_frames):
     conn = get_db()
     cur = conn.cursor()
@@ -220,7 +241,7 @@ def get_multi_segment_route(points, walk_id=None):
     for i in range(len(points) - 1):
         start = points[i]
         end = points[i + 1]
-        print(f"  Segment {i+1}/{len(points)-1}: ({start['lat']},{start['lng']}) -> ({end['lat']},{end['lng']})")
+        log_message(walk_id, f"Routing segment {i+1}/{len(points)-1}: ({start['lat']:.5f},{start['lng']:.5f}) -> ({end['lat']:.5f},{end['lng']:.5f})")
         encoded = get_directions(start["lat"], start["lng"], end["lat"], end["lng"], walk_id)
         segment_points = decode_polyline(encoded)
 
@@ -259,7 +280,7 @@ def make_video(frames_dir, output_path, num_frames, duration_seconds):
     framerate = max(1, round(num_frames / max(1, duration_seconds)))
     framerate = min(framerate, 60)
 
-    print(f"  Video: {num_frames} frames, {duration_seconds}s target, {framerate} fps")
+    print(f"  Video: {num_frames} frames, {duration_seconds}s target, {framerate} fps")  # no walk_id here
 
     cmd = [
         "ffmpeg", "-y",
@@ -285,6 +306,10 @@ def main(walk_id):
     heading_offset = walk.get("heading_offset", 0)
     walk_pitch = walk.get("pitch", 0)
     walk_fov = walk.get("fov", 90)
+
+    log_message(walk_id, f"Starting walk processing: {walk.get('name', 'Untitled')}")
+    log_message(walk_id, f"Settings: duration={duration_seconds}s, heading_offset={heading_offset}, pitch={walk_pitch}, fov={walk_fov}")
+    log_message(walk_id, f"Waypoints: {len(points)}")
     update_walk_status(walk_id, "processing")
 
     frames_dir = Path(OUTPUT_DIR) / "frames" / walk_id
@@ -294,19 +319,21 @@ def main(walk_id):
 
     try:
         # 1. Get multi-segment route
-        print(f"[{walk_id}] Getting directions for {len(points)} waypoints...")
+        log_message(walk_id, f"Getting directions for {len(points)} waypoints...")
         check_rate_limit(walk_id, len(points) - 1)
         polyline_points = get_multi_segment_route(points, walk_id)
-        print(f"[{walk_id}] Route has {len(polyline_points)} polyline points")
+        log_message(walk_id, f"Route has {len(polyline_points)} polyline points")
 
         # 2. Interpolate points
         interpolated = interpolate_points(polyline_points, interval_m=15)
-        print(f"[{walk_id}] Interpolated to {len(interpolated)} points")
+        log_message(walk_id, f"Interpolated to {len(interpolated)} points (every 15m)")
 
         update_walk_status(walk_id, "processing", total_frames=len(interpolated))
+        log_message(walk_id, f"Total frames to download: {len(interpolated)}")
 
         # Check rate limit before downloading all frames
         check_rate_limit(walk_id, len(interpolated))
+        log_message(walk_id, "Rate limit check passed, starting downloads...")
 
         # 3. Download Street View images
         def download_frame(args):
@@ -325,24 +352,29 @@ def main(walk_id):
             tasks.append((i, lat, lng, hdg, str(frame_path)))
 
         downloaded = 0
+        failed = 0
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(download_frame, t): t for t in tasks}
             for future in as_completed(futures):
                 idx, success = future.result()
                 if success:
                     downloaded += 1
-                if downloaded % 10 == 0:
+                else:
+                    failed += 1
+                total_done = downloaded + failed
+                if total_done % 10 == 0 or total_done == len(tasks):
                     save_progress(walk_id, downloaded)
+                    log_message(walk_id, f"Progress: {downloaded} downloaded, {failed} failed / {len(tasks)} total ({int(total_done/len(tasks)*100)}%)")
 
         save_progress(walk_id, downloaded)
-        # Log all streetview API calls at once
         log_api_usage(walk_id, "streetview", len(tasks))
-        print(f"[{walk_id}] Downloaded {downloaded} frames")
+        log_message(walk_id, f"Download complete: {downloaded} frames OK, {failed} failed")
 
         if downloaded == 0:
             raise Exception("No Street View images found along this route")
 
         # 4. Renumber frames sequentially
+        log_message(walk_id, "Renumbering frames sequentially...")
         existing = sorted(frames_dir.glob("*.jpg"))
         for new_idx, old_path in enumerate(existing):
             new_path = frames_dir / f"{new_idx:06d}.jpg"
@@ -353,14 +385,15 @@ def main(walk_id):
                 f.unlink()
 
         # 5. Make video with target duration
-        print(f"[{walk_id}] Creating video from {len(existing)} frames (target: {duration_seconds}s)...")
+        framerate = max(1, min(60, round(len(existing) / max(1, duration_seconds))))
+        log_message(walk_id, f"Creating video: {len(existing)} frames, {duration_seconds}s target, {framerate} fps")
         make_video(frames_dir, video_path, len(existing), duration_seconds)
 
         update_walk_status(walk_id, "done", total_frames=len(existing), downloaded_frames=len(existing))
-        print(f"[{walk_id}] Done! Video: {video_path}")
+        log_message(walk_id, f"Done! Video saved: {video_path}")
 
     except Exception as e:
-        print(f"[{walk_id}] Error: {e}", file=sys.stderr)
+        log_message(walk_id, f"Error: {e}", level="error")
         update_walk_status(walk_id, "error", error_message=str(e))
         sys.exit(1)
 

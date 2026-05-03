@@ -54,6 +54,18 @@ async function initDb() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
 
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS walk_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        walk_id VARCHAR(36) NOT NULL,
+        level VARCHAR(10) NOT NULL DEFAULT 'info',
+        message TEXT NOT NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        INDEX idx_walk_logs_walk (walk_id),
+        FOREIGN KEY (walk_id) REFERENCES walks(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
     // Migrate: add columns if missing
     const migrateCols = [
       ['walks', 'heading_offset', 'DOUBLE NOT NULL DEFAULT 0'],

@@ -5,6 +5,7 @@ import WalkList from './pages/WalkList';
 import WalkEditor from './pages/WalkEditor';
 import WalkDetail from './pages/WalkDetail';
 import ApiUsage from './pages/ApiUsage';
+import Gallery from './pages/Gallery';
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -18,6 +19,7 @@ function App() {
           <Route path="/new" element={<WalkEditor />} />
           <Route path="/walk/:id" element={<WalkDetail />} />
           <Route path="/walk/:id/edit" element={<WalkEditor />} />
+          <Route path="/gallery" element={<Gallery />} />
           <Route path="/usage" element={<ApiUsage />} />
         </Routes>
       </main>

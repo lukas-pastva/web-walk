@@ -1,6 +1,63 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import MapEditor from '../components/MapEditor';
+
+function LogWindow({ walkId, visible }) {
+  const [logs, setLogs] = useState([]);
+  const bottomRef = useRef(null);
+  const sinceRef = useRef('1970-01-01');
+
+  useEffect(() => {
+    if (!visible) return;
+    const fetchLogs = async () => {
+      try {
+        const resp = await fetch(`/api/walks/${walkId}/logs?since=${encodeURIComponent(sinceRef.current)}`);
+        const data = await resp.json();
+        if (data.length > 0) {
+          setLogs((prev) => [...prev, ...data]);
+          sinceRef.current = data[data.length - 1].created_at;
+        }
+      } catch (e) {}
+    };
+    fetchLogs();
+    const interval = setInterval(fetchLogs, 1500);
+    return () => clearInterval(interval);
+  }, [walkId, visible]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
+
+  // Reset when walk restarts
+  useEffect(() => {
+    if (visible) {
+      setLogs([]);
+      sinceRef.current = '1970-01-01';
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <div className="info-card log-card">
+      <h3>Processing Log</h3>
+      <div className="log-window">
+        {logs.length === 0 && (
+          <div className="log-line log-info">Waiting for logs...</div>
+        )}
+        {logs.map((l) => (
+          <div key={l.id} className={`log-line log-${l.level}`}>
+            <span className="log-time">
+              {new Date(l.created_at).toLocaleTimeString()}
+            </span>
+            <span className="log-msg">{l.message}</span>
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+    </div>
+  );
+}
 
 export default function WalkDetail() {
   const { id } = useParams();
@@ -8,6 +65,7 @@ export default function WalkDetail() {
   const [walk, setWalk] = useState(null);
   const [loading, setLoading] = useState(true);
   const [rateLimitError, setRateLimitError] = useState(null);
+  const [showLogs, setShowLogs] = useState(false);
 
   const fetchWalk = async () => {
     try {
@@ -34,12 +92,21 @@ export default function WalkDetail() {
     return () => clearInterval(interval);
   }, [walk?.status]);
 
+  // Show logs automatically when processing starts
+  useEffect(() => {
+    if (walk && (walk.status === 'pending' || walk.status === 'processing')) {
+      setShowLogs(true);
+    }
+  }, [walk?.status]);
+
   const handleGenerate = async () => {
     setRateLimitError(null);
+    setShowLogs(true);
     const resp = await fetch(`/api/walks/${id}/generate`, { method: 'POST' });
     if (resp.status === 429) {
       const data = await resp.json();
       setRateLimitError(data.message);
+      setShowLogs(false);
       return;
     }
     fetchWalk();
@@ -49,6 +116,19 @@ export default function WalkDetail() {
     if (!confirm('Delete this walk?')) return;
     await fetch(`/api/walks/${id}`, { method: 'DELETE' });
     navigate('/');
+  };
+
+  const handleReprocess = async () => {
+    await fetch(`/api/walks/${id}/reprocess`, { method: 'POST' });
+    await fetchWalk();
+    handleGenerate();
+  };
+
+  const handleDeleteVideo = async () => {
+    if (!confirm('Delete video? Walk will be reset to draft.')) return;
+    await fetch(`/api/walks/${id}/video`, { method: 'DELETE' });
+    setShowLogs(false);
+    fetchWalk();
   };
 
   if (loading || !walk) {
@@ -146,10 +226,30 @@ export default function WalkDetail() {
                   <button className="btn-primary" onClick={handleGenerate}>
                     Regenerate
                   </button>
+                  <button className="btn-danger btn-small" onClick={handleDeleteVideo}>
+                    Delete Video
+                  </button>
                 </>
+              )}
+              {isProcessing && (
+                <button className="btn-secondary" onClick={handleReprocess}>
+                  Reprocess
+                </button>
+              )}
+              {isError && walk.points?.length >= 2 && (
+                <button className="btn-secondary" onClick={handleReprocess}>
+                  Reprocess
+                </button>
+              )}
+              {!isProcessing && (
+                <button className="btn-secondary" onClick={() => setShowLogs((v) => !v)}>
+                  {showLogs ? 'Hide Logs' : 'Show Logs'}
+                </button>
               )}
             </div>
           </div>
+
+          <LogWindow walkId={id} visible={showLogs} />
 
           {isDone && (
             <div className="info-card video-card">

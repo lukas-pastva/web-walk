@@ -165,6 +165,67 @@ app.delete('/api/walks/:id', async (req, res) => {
   }
 });
 
+// Delete video only (keep walk)
+app.delete('/api/walks/:id/video', async (req, res) => {
+  try {
+    const [walks] = await pool.query('SELECT * FROM walks WHERE id = ?', [req.params.id]);
+    if (!walks.length) return res.status(404).json({ error: 'Walk not found' });
+
+    const framesDir = path.join(OUTPUT_DIR, 'frames', req.params.id);
+    const videoPath = path.join(OUTPUT_DIR, 'videos', `${req.params.id}.mp4`);
+    if (fs.existsSync(framesDir)) fs.rmSync(framesDir, { recursive: true });
+    if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
+
+    await pool.query(
+      `UPDATE walks SET status = 'draft', total_frames = 0, downloaded_frames = 0,
+       error_message = NULL, updated_at = NOW() WHERE id = ?`,
+      [req.params.id]
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Reprocess (force reset status so generate works again)
+app.post('/api/walks/:id/reprocess', async (req, res) => {
+  try {
+    const [walks] = await pool.query('SELECT * FROM walks WHERE id = ?', [req.params.id]);
+    if (!walks.length) return res.status(404).json({ error: 'Walk not found' });
+
+    // Clean up old files
+    const framesDir = path.join(OUTPUT_DIR, 'frames', req.params.id);
+    if (fs.existsSync(framesDir)) fs.rmSync(framesDir, { recursive: true });
+
+    await pool.query(
+      `UPDATE walks SET status = 'draft', total_frames = 0, downloaded_frames = 0,
+       error_message = NULL, updated_at = NOW() WHERE id = ?`,
+      [req.params.id]
+    );
+
+    res.json({ ok: true, status: 'reset' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Gallery - list walks that have videos
+app.get('/api/gallery', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, name, duration_seconds, created_at FROM walks WHERE status = 'done' ORDER BY updated_at DESC"
+    );
+    // Filter to only those with actual video files
+    const gallery = rows.filter((w) =>
+      fs.existsSync(path.join(OUTPUT_DIR, 'videos', `${w.id}.mp4`))
+    );
+    res.json(gallery);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Daily API request limit
 const DAILY_REQUEST_LIMIT = parseInt(process.env.DAILY_API_LIMIT) || 5000;
 
@@ -199,6 +260,9 @@ app.post('/api/walks/:id/generate', async (req, res) => {
        error_message = NULL, updated_at = NOW() WHERE id = ?`,
       [req.params.id]
     );
+
+    // Clear old logs for this walk
+    await pool.query('DELETE FROM walk_logs WHERE walk_id = ?', [req.params.id]);
 
     // Spawn walker process
     const child = spawn(PYTHON_PATH, [WALKER_SCRIPT, req.params.id], {
@@ -265,6 +329,21 @@ app.get('/api/usage', async (req, res) => {
         remaining: Math.max(0, DAILY_REQUEST_LIMIT - last24h[0].total_requests),
       },
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Walk Logs ---
+
+app.get('/api/walks/:id/logs', async (req, res) => {
+  try {
+    const since = req.query.since || '1970-01-01';
+    const [rows] = await pool.query(
+      'SELECT * FROM walk_logs WHERE walk_id = ? AND created_at > ? ORDER BY created_at ASC LIMIT 500',
+      [req.params.id, since]
+    );
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
