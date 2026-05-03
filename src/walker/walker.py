@@ -289,8 +289,8 @@ def make_video(frames_dir, output_path, num_frames, duration_seconds):
         "-i", str(frames_dir / "%06d.jpg"),
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
-        "-preset", "fast",
-        "-crf", "23",
+        "-preset", "slow",
+        "-crf", "0",
         str(output_path),
     ]
     subprocess.run(cmd, check=True, capture_output=True)
