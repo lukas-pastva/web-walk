@@ -64,6 +64,47 @@ def save_progress(walk_id, downloaded_frames):
     conn.close()
 
 
+# Google API pricing (per request)
+API_COSTS = {
+    "directions": 0.005,      # $5 per 1000 requests
+    "streetview": 0.007,      # $7 per 1000 requests
+}
+
+# Daily limit (matches server-side DAILY_API_LIMIT env var)
+DAILY_REQUEST_LIMIT = int(os.environ.get("DAILY_API_LIMIT", "5000"))
+
+
+def get_usage_last_24h():
+    """Get total API requests in last 24 hours."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT COALESCE(SUM(request_count), 0) as total FROM api_usage WHERE created_at >= datetime('now', '-24 hours')"
+    ).fetchone()
+    conn.close()
+    return row["total"]
+
+
+def check_rate_limit(walk_id, needed=1):
+    """Check if we can make more API requests. Raises if limit exceeded."""
+    used = get_usage_last_24h()
+    if used + needed > DAILY_REQUEST_LIMIT:
+        msg = f"Daily API limit reached ({used}/{DAILY_REQUEST_LIMIT}). Wait 24 hours."
+        update_walk_status(walk_id, "error", error_message=msg)
+        raise Exception(msg)
+
+
+def log_api_usage(walk_id, api_type, request_count=1):
+    """Log API usage to database."""
+    cost = API_COSTS.get(api_type, 0) * request_count
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO api_usage (walk_id, api_type, request_count, cost_usd) VALUES (?, ?, ?, ?)",
+        (walk_id, api_type, request_count, cost),
+    )
+    conn.commit()
+    conn.close()
+
+
 def decode_polyline(encoded):
     """Decode a Google Maps encoded polyline string into a list of (lat, lng)."""
     points = []
@@ -136,7 +177,7 @@ def interpolate_points(polyline_points, interval_m=15):
     return result
 
 
-def get_directions(start_lat, start_lng, end_lat, end_lng):
+def get_directions(start_lat, start_lng, end_lat, end_lng, walk_id=None):
     """Get route from Google Maps Directions API."""
     url = "https://maps.googleapis.com/maps/api/directions/json"
     params = {
@@ -150,10 +191,11 @@ def get_directions(start_lat, start_lng, end_lat, end_lng):
     data = resp.json()
     if data["status"] != "OK":
         raise Exception(f"Directions API error: {data['status']}")
+    log_api_usage(walk_id, "directions", 1)
     return data["routes"][0]["overview_polyline"]["points"]
 
 
-def get_multi_segment_route(points):
+def get_multi_segment_route(points, walk_id=None):
     """Get route through multiple waypoints, returns combined polyline points."""
     all_polyline_points = []
 
@@ -161,7 +203,7 @@ def get_multi_segment_route(points):
         start = points[i]
         end = points[i + 1]
         print(f"  Segment {i+1}/{len(points)-1}: ({start['lat']},{start['lng']}) -> ({end['lat']},{end['lng']})")
-        encoded = get_directions(start["lat"], start["lng"], end["lat"], end["lng"])
+        encoded = get_directions(start["lat"], start["lng"], end["lat"], end["lng"], walk_id)
         segment_points = decode_polyline(encoded)
 
         # Skip first point of subsequent segments to avoid duplicates
@@ -173,7 +215,7 @@ def get_multi_segment_route(points):
     return all_polyline_points
 
 
-def download_streetview(lat, lng, heading, output_path):
+def download_streetview(lat, lng, heading, output_path, walk_id=None):
     """Download a Street View image. Returns True if image was saved."""
     url = "https://maps.googleapis.com/maps/api/streetview"
     params = {
@@ -234,7 +276,8 @@ def main(walk_id):
     try:
         # 1. Get multi-segment route
         print(f"[{walk_id}] Getting directions for {len(points)} waypoints...")
-        polyline_points = get_multi_segment_route(points)
+        check_rate_limit(walk_id, len(points) - 1)
+        polyline_points = get_multi_segment_route(points, walk_id)
         print(f"[{walk_id}] Route has {len(polyline_points)} polyline points")
 
         # 2. Interpolate points
@@ -242,6 +285,9 @@ def main(walk_id):
         print(f"[{walk_id}] Interpolated to {len(interpolated)} points")
 
         update_walk_status(walk_id, "processing", total_frames=len(interpolated))
+
+        # Check rate limit before downloading all frames
+        check_rate_limit(walk_id, len(interpolated))
 
         # 3. Download Street View images
         def download_frame(args):
@@ -269,6 +315,8 @@ def main(walk_id):
                     save_progress(walk_id, downloaded)
 
         save_progress(walk_id, downloaded)
+        # Log all streetview API calls at once
+        log_api_usage(walk_id, "streetview", len(tasks))
         print(f"[{walk_id}] Downloaded {downloaded} frames")
 
         if downloaded == 0:

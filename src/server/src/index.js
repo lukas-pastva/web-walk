@@ -125,8 +125,22 @@ app.delete('/api/walks/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// Daily API request limit (Street View is ~$7/1000, so 5000 = ~$35/day max)
+const DAILY_REQUEST_LIMIT = parseInt(process.env.DAILY_API_LIMIT) || 5000;
+
 // Generate video for a walk
 app.post('/api/walks/:id/generate', (req, res) => {
+  // Rate limit check
+  const usage24h = stmts.getApiUsageLast24h.get();
+  if (usage24h.total_requests >= DAILY_REQUEST_LIMIT) {
+    return res.status(429).json({
+      error: 'Daily API limit reached',
+      message: `Limit ${DAILY_REQUEST_LIMIT} requests per 24 hours exceeded (${usage24h.total_requests} used). Try again later.`,
+      requests_used: usage24h.total_requests,
+      limit: DAILY_REQUEST_LIMIT,
+    });
+  }
+
   const walk = stmts.getWalk.get(req.params.id);
   if (!walk) return res.status(404).json({ error: 'Walk not found' });
 
@@ -167,6 +181,25 @@ app.get('/api/walks/:id/video', (req, res) => {
     return res.status(404).json({ error: 'Video not found' });
   }
   res.sendFile(videoPath);
+});
+
+// --- API Usage ---
+
+app.get('/api/usage', (req, res) => {
+  const summary = stmts.getApiUsageSummary.all();
+  const byMonth = stmts.getApiUsageByMonth.all();
+  const total = stmts.getApiUsageTotal.get();
+  const last24h = stmts.getApiUsageLast24h.get();
+  res.json({
+    summary,
+    byMonth,
+    total,
+    rateLimit: {
+      used: last24h.total_requests,
+      limit: DAILY_REQUEST_LIMIT,
+      remaining: Math.max(0, DAILY_REQUEST_LIMIT - last24h.total_requests),
+    },
+  });
 });
 
 // SPA fallback

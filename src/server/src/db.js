@@ -32,6 +32,15 @@ db.exec(`
     lng REAL NOT NULL,
     UNIQUE(walk_id, sort_order)
   );
+
+  CREATE TABLE IF NOT EXISTS api_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    walk_id TEXT,
+    api_type TEXT NOT NULL,
+    request_count INTEGER NOT NULL DEFAULT 1,
+    cost_usd REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // Prepared statements
@@ -60,6 +69,45 @@ const stmts = {
   `),
   deletePoints: db.prepare('DELETE FROM walk_points WHERE walk_id = ?'),
   getPoints: db.prepare('SELECT * FROM walk_points WHERE walk_id = ? ORDER BY sort_order'),
+
+  // API usage
+  insertApiUsage: db.prepare(`
+    INSERT INTO api_usage (walk_id, api_type, request_count, cost_usd)
+    VALUES (@walk_id, @api_type, @request_count, @cost_usd)
+  `),
+  getApiUsageSummary: db.prepare(`
+    SELECT
+      api_type,
+      SUM(request_count) as total_requests,
+      SUM(cost_usd) as total_cost,
+      MIN(created_at) as first_used,
+      MAX(created_at) as last_used
+    FROM api_usage
+    GROUP BY api_type
+  `),
+  getApiUsageByMonth: db.prepare(`
+    SELECT
+      strftime('%Y-%m', created_at) as month,
+      api_type,
+      SUM(request_count) as total_requests,
+      SUM(cost_usd) as total_cost
+    FROM api_usage
+    GROUP BY month, api_type
+    ORDER BY month DESC
+  `),
+  getApiUsageTotal: db.prepare(`
+    SELECT
+      SUM(request_count) as total_requests,
+      SUM(cost_usd) as total_cost
+    FROM api_usage
+  `),
+  getApiUsageLast24h: db.prepare(`
+    SELECT
+      COALESCE(SUM(request_count), 0) as total_requests,
+      COALESCE(SUM(cost_usd), 0) as total_cost
+    FROM api_usage
+    WHERE created_at >= datetime('now', '-24 hours')
+  `),
 };
 
 module.exports = { db, stmts };

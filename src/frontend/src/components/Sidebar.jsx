@@ -20,6 +20,10 @@ export default function Sidebar({ open, onToggle }) {
             <span className="nav-icon">+</span>
             <span>New Walk</span>
           </NavLink>
+          <NavLink to="/usage" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            <span className="nav-icon">$</span>
+            <span>API Usage</span>
+          </NavLink>
         </nav>
       )}
     </aside>

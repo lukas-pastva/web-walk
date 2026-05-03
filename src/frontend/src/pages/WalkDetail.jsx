@@ -7,6 +7,7 @@ export default function WalkDetail() {
   const navigate = useNavigate();
   const [walk, setWalk] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [rateLimitError, setRateLimitError] = useState(null);
 
   const fetchWalk = async () => {
     try {
@@ -34,7 +35,13 @@ export default function WalkDetail() {
   }, [walk?.status]);
 
   const handleGenerate = async () => {
-    await fetch(`/api/walks/${id}/generate`, { method: 'POST' });
+    setRateLimitError(null);
+    const resp = await fetch(`/api/walks/${id}/generate`, { method: 'POST' });
+    if (resp.status === 429) {
+      const data = await resp.json();
+      setRateLimitError(data.message);
+      return;
+    }
     fetchWalk();
   };
 
@@ -107,6 +114,12 @@ export default function WalkDetail() {
             {isError && (
               <div className="error-section">
                 <p>Error: {walk.error_message}</p>
+              </div>
+            )}
+
+            {rateLimitError && (
+              <div className="error-section">
+                <p>{rateLimitError}</p>
               </div>
             )}
 
