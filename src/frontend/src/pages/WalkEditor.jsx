@@ -12,6 +12,7 @@ export default function WalkEditor() {
   const [headingOffset, setHeadingOffset] = useState(0);
   const [pitch, setPitch] = useState(0);
   const [fov, setFov] = useState(90);
+  const [aspectRatio, setAspectRatio] = useState('1:1');
   const [points, setPoints] = useState([]);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(isEdit);
@@ -26,6 +27,7 @@ export default function WalkEditor() {
           setHeadingOffset(walk.heading_offset || 0);
           setPitch(walk.pitch || 0);
           setFov(walk.fov || 90);
+          setAspectRatio(walk.aspect_ratio || '1:1');
           setPoints(walk.points.map((p) => ({ lat: p.lat, lng: p.lng })));
           setLoading(false);
         });
@@ -38,6 +40,7 @@ export default function WalkEditor() {
           if (s.default_heading_offset) setHeadingOffset(Number(s.default_heading_offset));
           if (s.default_pitch) setPitch(Number(s.default_pitch));
           if (s.default_fov) setFov(Number(s.default_fov));
+          if (s.default_aspect_ratio) setAspectRatio(s.default_aspect_ratio);
         })
         .catch(() => {});
     }
@@ -61,6 +64,7 @@ export default function WalkEditor() {
       heading_offset: parseFloat(headingOffset) || 0,
       pitch: parseFloat(pitch) || 0,
       fov: parseFloat(fov) || 90,
+      aspect_ratio: aspectRatio,
       points,
     };
 
@@ -165,6 +169,25 @@ export default function WalkEditor() {
             />
             <span className="form-hint">
               {fov <= 40 ? 'Zoomed in' : fov <= 80 ? 'Normal-close' : fov <= 100 ? 'Normal' : 'Wide angle'}
+            </span>
+          </div>
+
+          <div className="form-group">
+            <label>Video Format</label>
+            <div className="aspect-ratio-options">
+              {['1:1', '3:2', '4:3', '16:9'].map((ar) => (
+                <button
+                  key={ar}
+                  type="button"
+                  className={`aspect-btn ${aspectRatio === ar ? 'active' : ''}`}
+                  onClick={() => setAspectRatio(ar)}
+                >
+                  {ar}
+                </button>
+              ))}
+            </div>
+            <span className="form-hint">
+              {aspectRatio === '1:1' ? 'Square' : aspectRatio === '3:2' ? 'Photo' : aspectRatio === '4:3' ? 'Classic' : 'Widescreen'}
             </span>
           </div>
 

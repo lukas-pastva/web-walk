@@ -58,7 +58,7 @@ app.get('/api/walks/:id', async (req, res) => {
 
 // Create walk
 app.post('/api/walks', async (req, res) => {
-  const { name, duration_seconds, heading_offset, pitch, fov, points } = req.body;
+  const { name, duration_seconds, heading_offset, pitch, fov, aspect_ratio, points } = req.body;
   if (!points || points.length < 2) {
     return res.status(400).json({ error: 'At least 2 points required' });
   }
@@ -68,9 +68,9 @@ app.post('/api/walks', async (req, res) => {
   try {
     await conn.beginTransaction();
     await conn.query(
-      `INSERT INTO walks (id, name, duration_seconds, heading_offset, pitch, fov, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'draft')`,
-      [id, name || 'Untitled Walk', duration_seconds || 60, heading_offset || 0, pitch || 0, fov || 90]
+      `INSERT INTO walks (id, name, duration_seconds, heading_offset, pitch, fov, aspect_ratio, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+      [id, name || 'Untitled Walk', duration_seconds || 60, heading_offset || 0, pitch || 0, fov || 90, aspect_ratio || '1:1']
     );
     for (let i = 0; i < points.length; i++) {
       await conn.query(
@@ -102,13 +102,13 @@ app.put('/api/walks/:id', async (req, res) => {
       return res.status(400).json({ error: 'Can only edit draft walks' });
     }
 
-    const { name, duration_seconds, heading_offset, pitch, fov, points } = req.body;
+    const { name, duration_seconds, heading_offset, pitch, fov, aspect_ratio, points } = req.body;
 
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
       await conn.query(
-        `UPDATE walks SET name = ?, duration_seconds = ?, heading_offset = ?, pitch = ?, fov = ?,
+        `UPDATE walks SET name = ?, duration_seconds = ?, heading_offset = ?, pitch = ?, fov = ?, aspect_ratio = ?,
          updated_at = NOW() WHERE id = ?`,
         [
           name || walk.name,
@@ -116,6 +116,7 @@ app.put('/api/walks/:id', async (req, res) => {
           heading_offset ?? walk.heading_offset ?? 0,
           pitch ?? walk.pitch ?? 0,
           fov ?? walk.fov ?? 90,
+          aspect_ratio || walk.aspect_ratio || '1:1',
           req.params.id,
         ]
       );
@@ -405,6 +406,89 @@ app.get('/api/cache/stats', async (req, res) => {
       'SELECT COUNT(*) as total_images, COALESCE(SUM(file_size), 0) as total_bytes FROM streetview_cache'
     );
     res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Estimate cache hits for a walk before generating
+app.get('/api/walks/:id/estimate-cache', async (req, res) => {
+  try {
+    const [walks] = await pool.query('SELECT * FROM walks WHERE id = ?', [req.params.id]);
+    if (!walks.length) return res.status(404).json({ error: 'Walk not found' });
+    const walk = walks[0];
+
+    const [points] = await pool.query(
+      'SELECT * FROM walk_points WHERE walk_id = ? ORDER BY sort_order', [req.params.id]
+    );
+    if (points.length < 2) return res.json({ estFrames: 0, cachedFrames: 0, newFrames: 0 });
+
+    const pitch = Math.round(walk.pitch || 0);
+    const fov = Math.round(walk.fov || 90);
+    const headingOffset = walk.heading_offset || 0;
+    const aspectRatio = walk.aspect_ratio || '1:1';
+
+    // Determine image size based on aspect ratio (same logic as walker)
+    const SIGNING = !!(process.env.GOOGLE_SIGNING_SECRET);
+    const ASPECT_SIZES = {
+      '1:1': SIGNING ? '2048x2048' : '640x640',
+      '3:2': SIGNING ? '2048x1365' : '640x427',
+      '4:3': SIGNING ? '2048x1536' : '640x480',
+      '16:9': SIGNING ? '2048x1152' : '640x360',
+    };
+    const size = ASPECT_SIZES[aspectRatio] || ASPECT_SIZES['1:1'];
+
+    // Estimate route: straight-line * 1.4 factor, points every 15m
+    const toRad = (d) => (d * Math.PI) / 180;
+    const haversine = (lat1, lng1, lat2, lng2) => {
+      const R = 6371000;
+      const dp = toRad(lat2 - lat1);
+      const dl = toRad(lng2 - lng1);
+      const a = Math.sin(dp / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dl / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    };
+    const bearing = (lat1, lng1, lat2, lng2) => {
+      const dl = toRad(lng2 - lng1);
+      const x = Math.sin(dl) * Math.cos(toRad(lat2));
+      const y = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dl);
+      return (Math.atan2(x, y) * 180 / Math.PI + 360) % 360;
+    };
+
+    // Generate estimated points along straight-line segments
+    const estPoints = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const d = haversine(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng) * 1.4;
+      const numPts = Math.ceil(d / 15);
+      for (let j = 0; j <= numPts; j++) {
+        const frac = numPts > 0 ? j / numPts : 0;
+        const lat = points[i].lat + frac * (points[i + 1].lat - points[i].lat);
+        const lng = points[i].lng + frac * (points[i + 1].lng - points[i].lng);
+        const hdg = Math.round((bearing(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng) + headingOffset + 360) % 360);
+        estPoints.push({ lat: parseFloat(lat.toFixed(5)), lng: parseFloat(lng.toFixed(5)), hdg });
+      }
+    }
+
+    // Check cache for each estimated point
+    let cachedFrames = 0;
+    if (estPoints.length > 0) {
+      // Batch check: query all cache entries matching our params
+      const [cached] = await pool.query(
+        'SELECT lat_key, lng_key, heading_key FROM streetview_cache WHERE pitch = ? AND fov = ? AND size = ?',
+        [pitch, fov, size]
+      );
+      const cacheSet = new Set(cached.map(r => `${r.lat_key}_${r.lng_key}_${r.heading_key}`));
+      for (const p of estPoints) {
+        if (cacheSet.has(`${p.lat}_${p.lng}_${p.hdg}`)) {
+          cachedFrames++;
+        }
+      }
+    }
+
+    const estFrames = estPoints.length;
+    const newFrames = estFrames - cachedFrames;
+    const savedCost = cachedFrames * 0.007;
+
+    res.json({ estFrames, cachedFrames, newFrames, savedCost });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

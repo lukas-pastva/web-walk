@@ -38,9 +38,26 @@ function estimateCost(points) {
   };
 }
 
-function CostEstimate({ points, onConfirm, onCancel }) {
+function CostEstimate({ points, walkId, onConfirm, onCancel }) {
   const est = estimateCost(points);
+  const [cacheEst, setCacheEst] = useState(null);
+
+  useEffect(() => {
+    if (!walkId) return;
+    fetch(`/api/walks/${walkId}/estimate-cache`)
+      .then((r) => r.json())
+      .then(setCacheEst)
+      .catch(() => {});
+  }, [walkId]);
+
   if (!est) return null;
+
+  const cached = cacheEst?.cachedFrames || 0;
+  const savedCost = cacheEst?.savedCost || 0;
+  const newFrames = cached > 0 ? Math.max(0, est.estFrames - cached) : est.estFrames;
+  const newSvCost = newFrames * API_COSTS.streetview;
+  const actualTotal = est.dirCost + newSvCost;
+
   return (
     <div className="cost-estimate">
       <h4>Cost Estimate</h4>
@@ -54,13 +71,31 @@ function CostEstimate({ points, onConfirm, onCancel }) {
           <span>${est.dirCost.toFixed(3)}</span>
         </div>
         <div className="cost-row">
-          <span>Street View ({est.estFrames} frames)</span>
+          <span>Street View ({est.estFrames} frames total)</span>
           <span>${est.svCost.toFixed(2)}</span>
         </div>
+        {cached > 0 && (
+          <>
+            <div className="cost-row cost-saved">
+              <span>Cached frames (no API cost)</span>
+              <span>{cached} frames (-${savedCost.toFixed(2)})</span>
+            </div>
+            <div className="cost-row">
+              <span>New downloads needed</span>
+              <span>{newFrames} frames (${newSvCost.toFixed(2)})</span>
+            </div>
+          </>
+        )}
         <div className="cost-row cost-total">
-          <span>Total ({est.totalRequests} requests)</span>
-          <span>${est.totalCost.toFixed(2)}</span>
+          <span>Total ({est.directionRequests + newFrames} API requests)</span>
+          <span>${actualTotal.toFixed(2)}</span>
         </div>
+        {cached > 0 && (
+          <div className="cost-row cost-saved">
+            <span>You save</span>
+            <span>${savedCost.toFixed(2)} ({cached} cached images)</span>
+          </div>
+        )}
       </div>
       <div className="cost-actions">
         <button className="btn-primary" onClick={onConfirm}>Confirm Generate</button>
@@ -299,6 +334,10 @@ export default function WalkDetail() {
               <span>{walk.fov || 90}°</span>
             </div>
             <div className="info-row">
+              <span className="info-label">Format</span>
+              <span>{walk.aspect_ratio || '1:1'}</span>
+            </div>
+            <div className="info-row">
               <span className="info-label">Created</span>
               <span>{new Date(walk.created_at).toLocaleString()}</span>
             </div>
@@ -365,6 +404,7 @@ export default function WalkDetail() {
             <div className="info-card">
               <CostEstimate
                 points={walk.points}
+                walkId={id}
                 onConfirm={handleGenerateConfirm}
                 onCancel={() => setShowEstimate(false)}
               />

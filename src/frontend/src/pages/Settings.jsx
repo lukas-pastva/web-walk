@@ -5,6 +5,7 @@ const SETTING_DEFS = [
   { key: 'default_heading_offset', label: 'Default Heading Offset', type: 'range', min: -180, max: 180, step: 5, default: '0', unit: '\u00B0' },
   { key: 'default_pitch', label: 'Default Pitch', type: 'range', min: -90, max: 90, step: 5, default: '0', unit: '\u00B0' },
   { key: 'default_fov', label: 'Default Zoom / FOV', type: 'range', min: 20, max: 120, step: 5, default: '90', unit: '\u00B0' },
+  { key: 'default_aspect_ratio', label: 'Default Video Format', type: 'aspect', default: '1:1' },
 ];
 
 function hintText(key, val) {
@@ -74,6 +75,28 @@ export default function Settings() {
 
         {SETTING_DEFS.map(def => {
           const val = getValue(def.key, def.default);
+          if (def.type === 'aspect') {
+            return (
+              <div className="form-group" key={def.key}>
+                <label>{def.label}</label>
+                <div className="aspect-ratio-options">
+                  {['1:1', '3:2', '4:3', '16:9'].map(ar => (
+                    <button
+                      key={ar}
+                      type="button"
+                      className={`aspect-btn ${val === ar ? 'active' : ''}`}
+                      onClick={() => handleChange(def.key, ar)}
+                    >
+                      {ar}
+                    </button>
+                  ))}
+                </div>
+                <span className="form-hint">
+                  {val === '1:1' ? 'Square' : val === '3:2' ? 'Photo' : val === '4:3' ? 'Classic' : 'Widescreen'}
+                </span>
+              </div>
+            );
+          }
           return (
             <div className="form-group" key={def.key}>
               <label>{def.label} ({val}{def.unit || ''})</label>

@@ -95,6 +95,7 @@ async function initDb() {
       ['walks', 'heading_offset', 'DOUBLE NOT NULL DEFAULT 0'],
       ['walks', 'pitch', 'DOUBLE NOT NULL DEFAULT 0'],
       ['walks', 'fov', 'DOUBLE NOT NULL DEFAULT 90'],
+      ['walks', 'aspect_ratio', "VARCHAR(10) NOT NULL DEFAULT '1:1'"],
     ];
     for (const [table, col, def] of migrateCols) {
       try { await conn.query(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); } catch (e) {}

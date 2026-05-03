@@ -273,8 +273,29 @@ def sign_url(url_to_sign):
     return url_to_sign + "&signature=" + encoded_sig
 
 
-# Use high-res if signing secret is available
+# Aspect ratio to image size mapping
+ASPECT_SIZES_SIGNED = {
+    "1:1": "2048x2048",
+    "3:2": "2048x1365",
+    "4:3": "2048x1536",
+    "16:9": "2048x1152",
+}
+ASPECT_SIZES_UNSIGNED = {
+    "1:1": "640x640",
+    "3:2": "640x427",
+    "4:3": "640x480",
+    "16:9": "640x360",
+}
+
+# Default image size (may be overridden per walk)
 IMAGE_SIZE = "2048x2048" if SIGNING_SECRET else "640x640"
+
+
+def get_image_size(aspect_ratio="1:1"):
+    """Get image size string for given aspect ratio."""
+    if SIGNING_SECRET:
+        return ASPECT_SIZES_SIGNED.get(aspect_ratio, ASPECT_SIZES_SIGNED["1:1"])
+    return ASPECT_SIZES_UNSIGNED.get(aspect_ratio, ASPECT_SIZES_UNSIGNED["1:1"])
 
 
 def cache_key_parts(lat, lng, heading, pitch, fov):
@@ -282,7 +303,7 @@ def cache_key_parts(lat, lng, heading, pitch, fov):
     return (round(lat, 5), round(lng, 5), round(heading), round(pitch), round(fov))
 
 
-def check_cache(lat, lng, heading, pitch, fov):
+def check_cache(lat, lng, heading, pitch, fov, image_size):
     """Check if image exists in cache. Returns file_path or None."""
     lat_k, lng_k, hdg_k, pitch_k, fov_k = cache_key_parts(lat, lng, heading, pitch, fov)
     try:
@@ -292,7 +313,7 @@ def check_cache(lat, lng, heading, pitch, fov):
             """SELECT file_path FROM streetview_cache
                WHERE lat_key = %s AND lng_key = %s AND heading_key = %s
                  AND pitch = %s AND fov = %s AND size = %s""",
-            (lat_k, lng_k, hdg_k, pitch_k, fov_k, IMAGE_SIZE),
+            (lat_k, lng_k, hdg_k, pitch_k, fov_k, image_size),
         )
         row = cur.fetchone()
         cur.close()
@@ -304,7 +325,7 @@ def check_cache(lat, lng, heading, pitch, fov):
     return None
 
 
-def save_to_cache(lat, lng, heading, pitch, fov, file_path):
+def save_to_cache(lat, lng, heading, pitch, fov, image_size, file_path):
     """Save image info to cache DB."""
     lat_k, lng_k, hdg_k, pitch_k, fov_k = cache_key_parts(lat, lng, heading, pitch, fov)
     try:
@@ -315,7 +336,7 @@ def save_to_cache(lat, lng, heading, pitch, fov, file_path):
             """INSERT INTO streetview_cache (lat_key, lng_key, heading_key, pitch, fov, size, file_path, file_size)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                ON DUPLICATE KEY UPDATE file_path = %s, file_size = %s""",
-            (lat_k, lng_k, hdg_k, pitch_k, fov_k, IMAGE_SIZE, file_path, file_size, file_path, file_size),
+            (lat_k, lng_k, hdg_k, pitch_k, fov_k, image_size, file_path, file_size, file_path, file_size),
         )
         conn.commit()
         cur.close()
@@ -327,18 +348,20 @@ def save_to_cache(lat, lng, heading, pitch, fov, file_path):
 CACHE_DIR = os.path.join(OUTPUT_DIR, "cache", "streetview")
 
 
-def download_streetview(lat, lng, heading, output_path, walk_id=None, pitch=0, fov=90):
+def download_streetview(lat, lng, heading, output_path, walk_id=None, pitch=0, fov=90, image_size=None):
     """Download a Street View image. Uses cache if available. Returns (True, from_cache) or (False, False)."""
+    if image_size is None:
+        image_size = IMAGE_SIZE
 
     # Check cache first
-    cached = check_cache(lat, lng, heading, pitch, fov)
+    cached = check_cache(lat, lng, heading, pitch, fov, image_size)
     if cached:
         shutil.copy2(cached, output_path)
         return True, True
 
     base_url = "https://maps.googleapis.com/maps/api/streetview"
     params = {
-        "size": IMAGE_SIZE,
+        "size": image_size,
         "location": f"{lat},{lng}",
         "heading": f"{heading:.1f}",
         "fov": str(fov),
@@ -358,10 +381,10 @@ def download_streetview(lat, lng, heading, output_path, walk_id=None, pitch=0, f
     # Save to persistent cache
     os.makedirs(CACHE_DIR, exist_ok=True)
     lat_k, lng_k, hdg_k, pitch_k, fov_k = cache_key_parts(lat, lng, heading, pitch, fov)
-    cache_filename = f"{lat_k}_{lng_k}_{hdg_k}_{pitch_k}_{fov_k}_{IMAGE_SIZE}.jpg"
+    cache_filename = f"{lat_k}_{lng_k}_{hdg_k}_{pitch_k}_{fov_k}_{image_size}.jpg"
     cache_path = os.path.join(CACHE_DIR, cache_filename)
     shutil.copy2(output_path, cache_path)
-    save_to_cache(lat, lng, heading, pitch, fov, cache_path)
+    save_to_cache(lat, lng, heading, pitch, fov, image_size, cache_path)
 
     return True, False
 
@@ -397,10 +420,12 @@ def main(walk_id):
     heading_offset = walk.get("heading_offset", 0)
     walk_pitch = walk.get("pitch", 0)
     walk_fov = walk.get("fov", 90)
+    walk_aspect = walk.get("aspect_ratio", "1:1")
+    walk_image_size = get_image_size(walk_aspect)
 
     log_message(walk_id, f"Starting walk processing: {walk.get('name', 'Untitled')}")
-    log_message(walk_id, f"Settings: duration={duration_seconds}s, heading_offset={heading_offset}, pitch={walk_pitch}, fov={walk_fov}")
-    log_message(walk_id, f"Image size: {IMAGE_SIZE} ({'signed URLs' if SIGNING_SECRET else 'unsigned'})")
+    log_message(walk_id, f"Settings: duration={duration_seconds}s, heading_offset={heading_offset}, pitch={walk_pitch}, fov={walk_fov}, aspect={walk_aspect}")
+    log_message(walk_id, f"Image size: {walk_image_size} ({'signed URLs' if SIGNING_SECRET else 'unsigned'})")
     log_message(walk_id, f"Waypoints: {len(points)}")
     update_walk_status(walk_id, "processing")
 
@@ -430,7 +455,7 @@ def main(walk_id):
         # 3. Download Street View images (with cache)
         def download_frame(args):
             idx, lat, lng, hdg, path = args
-            success, from_cache = download_streetview(lat, lng, hdg, path, walk_id, walk_pitch, walk_fov)
+            success, from_cache = download_streetview(lat, lng, hdg, path, walk_id, walk_pitch, walk_fov, walk_image_size)
             return idx, success, from_cache
 
         tasks = []
