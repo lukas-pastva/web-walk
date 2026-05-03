@@ -11,7 +11,7 @@ RUN npm run build
 # Stage 2: Final image with Node.js, Python, and FFmpeg
 FROM node:20-slim
 
-# Install system dependencies (including build tools for better-sqlite3)
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -19,7 +19,6 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     supervisor \
     curl \
-    build-essential \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -57,6 +56,11 @@ ENV NODE_ENV=production
 ENV PORT=8080
 ENV OUTPUT_DIR=/data
 ENV GOOGLE_API_KEY=
+ENV DB_HOST=localhost
+ENV DB_USER=root
+ENV DB_PASSWORD=
+ENV DB_NAME=web_walk
+ENV DB_PORT=3306
 ENV PYTHONUNBUFFERED=1
 ENV TZ=Europe/Bratislava
 

@@ -3,64 +3,80 @@ Web Walk - Google Street View route video generator.
 
 Usage: python walker.py <walk_id>
 
-Reads walk config from SQLite database, downloads Street View images
+Reads walk config from MySQL database, downloads Street View images
 along the multi-point route, and stitches them into a video.
 """
 
 import json
 import math
 import os
-import sqlite3
 import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import mysql.connector
 import requests
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/data")
 API_KEY = os.environ.get("GOOGLE_API_KEY", "")
-DB_PATH = os.path.join(OUTPUT_DIR, "webwalk.db")
+
+DB_CONFIG = {
+    "host": os.environ.get("DB_HOST", "localhost"),
+    "user": os.environ.get("DB_USER", "root"),
+    "password": os.environ.get("DB_PASSWORD", ""),
+    "database": os.environ.get("DB_NAME", "web_walk"),
+    "port": int(os.environ.get("DB_PORT", "3306")),
+}
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = mysql.connector.connect(**DB_CONFIG)
     return conn
 
 
 def load_walk(walk_id):
     conn = get_db()
-    walk = conn.execute("SELECT * FROM walks WHERE id = ?", (walk_id,)).fetchone()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT * FROM walks WHERE id = %s", (walk_id,))
+    walk = cur.fetchone()
     if not walk:
+        cur.close()
+        conn.close()
         raise Exception(f"Walk {walk_id} not found")
-    points = conn.execute(
-        "SELECT * FROM walk_points WHERE walk_id = ? ORDER BY sort_order",
+    cur.execute(
+        "SELECT * FROM walk_points WHERE walk_id = %s ORDER BY sort_order",
         (walk_id,),
-    ).fetchall()
+    )
+    points = cur.fetchall()
+    cur.close()
     conn.close()
-    return dict(walk), [dict(p) for p in points]
+    return walk, points
 
 
 def update_walk_status(walk_id, status, total_frames=0, downloaded_frames=0, error_message=None):
     conn = get_db()
-    conn.execute(
-        """UPDATE walks SET status = ?, total_frames = ?, downloaded_frames = ?,
-           error_message = ?, updated_at = datetime('now') WHERE id = ?""",
+    cur = conn.cursor()
+    cur.execute(
+        """UPDATE walks SET status = %s, total_frames = %s, downloaded_frames = %s,
+           error_message = %s, updated_at = NOW() WHERE id = %s""",
         (status, total_frames, downloaded_frames, error_message, walk_id),
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def save_progress(walk_id, downloaded_frames):
     conn = get_db()
-    conn.execute(
-        "UPDATE walks SET downloaded_frames = ?, updated_at = datetime('now') WHERE id = ?",
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE walks SET downloaded_frames = %s, updated_at = NOW() WHERE id = %s",
         (downloaded_frames, walk_id),
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
@@ -70,22 +86,23 @@ API_COSTS = {
     "streetview": 0.007,      # $7 per 1000 requests
 }
 
-# Daily limit (matches server-side DAILY_API_LIMIT env var)
+# Daily limit
 DAILY_REQUEST_LIMIT = int(os.environ.get("DAILY_API_LIMIT", "5000"))
 
 
 def get_usage_last_24h():
-    """Get total API requests in last 24 hours."""
     conn = get_db()
-    row = conn.execute(
-        "SELECT COALESCE(SUM(request_count), 0) as total FROM api_usage WHERE created_at >= datetime('now', '-24 hours')"
-    ).fetchone()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        "SELECT COALESCE(SUM(request_count), 0) as total FROM api_usage WHERE created_at >= NOW() - INTERVAL 24 HOUR"
+    )
+    row = cur.fetchone()
+    cur.close()
     conn.close()
     return row["total"]
 
 
 def check_rate_limit(walk_id, needed=1):
-    """Check if we can make more API requests. Raises if limit exceeded."""
     used = get_usage_last_24h()
     if used + needed > DAILY_REQUEST_LIMIT:
         msg = f"Daily API limit reached ({used}/{DAILY_REQUEST_LIMIT}). Wait 24 hours."
@@ -94,14 +111,15 @@ def check_rate_limit(walk_id, needed=1):
 
 
 def log_api_usage(walk_id, api_type, request_count=1):
-    """Log API usage to database."""
     cost = API_COSTS.get(api_type, 0) * request_count
     conn = get_db()
-    conn.execute(
-        "INSERT INTO api_usage (walk_id, api_type, request_count, cost_usd) VALUES (?, ?, ?, ?)",
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO api_usage (walk_id, api_type, request_count, cost_usd) VALUES (%s, %s, %s, %s)",
         (walk_id, api_type, request_count, cost),
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
@@ -238,9 +256,7 @@ def download_streetview(lat, lng, heading, output_path, walk_id=None, pitch=0, f
 
 def make_video(frames_dir, output_path, num_frames, duration_seconds):
     """Stitch frames into an MP4 video using FFmpeg with target duration."""
-    # Calculate framerate to achieve target duration
     framerate = max(1, round(num_frames / max(1, duration_seconds)))
-    # Clamp framerate to reasonable range
     framerate = min(framerate, 60)
 
     print(f"  Video: {num_frames} frames, {duration_seconds}s target, {framerate} fps")

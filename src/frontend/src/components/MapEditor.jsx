@@ -29,7 +29,7 @@ function makeIcon(color) {
   });
 }
 
-function SearchControl() {
+function SearchControl({ onAddPoint }) {
   const map = useMap();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -37,6 +37,14 @@ function SearchControl() {
   const [showResults, setShowResults] = useState(false);
   const timeoutRef = useRef(null);
   const wrapperRef = useRef(null);
+
+  // Disable Leaflet click propagation on the search container
+  React.useEffect(() => {
+    if (wrapperRef.current) {
+      L.DomEvent.disableClickPropagation(wrapperRef.current);
+      L.DomEvent.disableScrollPropagation(wrapperRef.current);
+    }
+  }, []);
 
   // Close dropdown on outside click
   React.useEffect(() => {
@@ -53,7 +61,6 @@ function SearchControl() {
     if (!q || q.trim().length < 5) { setResults([]); setShowResults(false); return; }
     setSearching(true);
     try {
-      // Use current map bounds to bias results to visible area
       const bounds = map.getBounds();
       const viewbox = `${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()},${bounds.getSouth()}`;
       const resp = await fetch(
@@ -88,6 +95,17 @@ function SearchControl() {
     setQuery(item.display_name.split(',').slice(0, 2).join(','));
   };
 
+  const handleAddPoint = (e, item) => {
+    e.stopPropagation();
+    if (onAddPoint) {
+      onAddPoint({ lat: parseFloat(item.lat), lng: parseFloat(item.lon) });
+    }
+    setResults([]);
+    setShowResults(false);
+    setQuery(item.display_name.split(',').slice(0, 2).join(','));
+    map.setView([parseFloat(item.lat), parseFloat(item.lon)], 16);
+  };
+
   const handleFocus = () => {
     if (results.length > 0) setShowResults(true);
   };
@@ -97,11 +115,7 @@ function SearchControl() {
       position: 'absolute', top: 10, left: 50, zIndex: 1000,
       background: 'white', borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
       padding: '6px 10px', maxWidth: 'calc(100% - 100px)',
-    }}
-    onMouseDown={(e) => e.stopPropagation()}
-    onClick={(e) => e.stopPropagation()}
-    onDblClick={(e) => e.stopPropagation()}
-    >
+    }}>
       <form onSubmit={handleSubmit} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         <input
           type="text"
@@ -126,16 +140,30 @@ function SearchControl() {
             <li key={r.place_id} onClick={() => handleSelect(r)} style={{
               padding: '8px 8px', cursor: 'pointer', fontSize: 13,
               borderBottom: '1px solid #eee', lineHeight: 1.3,
+              display: 'flex', alignItems: 'center', gap: 8,
             }}
             onMouseEnter={(e) => e.currentTarget.style.background = '#f0f4ff'}
             onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
             >
-              <div style={{ fontWeight: 600, fontSize: 13 }}>
-                {r.display_name.split(',').slice(0, 2).join(',')}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>
+                  {r.display_name.split(',').slice(0, 2).join(',')}
+                </div>
+                <div style={{ color: '#888', fontSize: 11, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {r.display_name.split(',').slice(2).join(',').trim()}
+                </div>
               </div>
-              <div style={{ color: '#888', fontSize: 11, marginTop: 2 }}>
-                {r.display_name.split(',').slice(2).join(',').trim()}
-              </div>
+              {onAddPoint && (
+                <button
+                  onClick={(e) => handleAddPoint(e, r)}
+                  style={{
+                    background: '#4a90d9', color: 'white', border: 'none',
+                    borderRadius: 4, padding: '4px 8px', cursor: 'pointer',
+                    fontSize: 16, fontWeight: 700, lineHeight: 1, flexShrink: 0,
+                  }}
+                  title="Add as waypoint"
+                >+</button>
+              )}
             </li>
           ))}
         </ul>
@@ -175,7 +203,7 @@ export default function MapEditor({ points, onMapClick, readonly }) {
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      {!readonly && <SearchControl />}
+      {!readonly && <SearchControl onAddPoint={onMapClick} />}
       {points.length >= 1 && <FitBounds points={points} />}
       <ClickHandler onClick={onMapClick} readonly={readonly} />
       {points.map((p, i) => (

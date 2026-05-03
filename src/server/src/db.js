@@ -1,123 +1,71 @@
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
+const mysql = require('mysql2/promise');
 
-const OUTPUT_DIR = process.env.OUTPUT_DIR || '/data';
-fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'web_walk',
+  port: parseInt(process.env.DB_PORT) || 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
+  charset: 'utf8mb4',
+});
 
-const db = new Database(path.join(OUTPUT_DIR, 'webwalk.db'));
+async function initDb() {
+  const conn = await pool.getConnection();
+  try {
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS walks (
+        id VARCHAR(36) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL DEFAULT 'Untitled Walk',
+        duration_seconds INT NOT NULL DEFAULT 60,
+        heading_offset DOUBLE NOT NULL DEFAULT 0,
+        pitch DOUBLE NOT NULL DEFAULT 0,
+        fov DOUBLE NOT NULL DEFAULT 90,
+        status VARCHAR(20) NOT NULL DEFAULT 'draft',
+        total_frames INT NOT NULL DEFAULT 0,
+        downloaded_frames INT NOT NULL DEFAULT 0,
+        error_message TEXT,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
 
-// Enable WAL mode for better concurrent read performance
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS walk_points (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        walk_id VARCHAR(36) NOT NULL,
+        sort_order INT NOT NULL,
+        lat DOUBLE NOT NULL,
+        lng DOUBLE NOT NULL,
+        UNIQUE KEY uq_walk_sort (walk_id, sort_order),
+        FOREIGN KEY (walk_id) REFERENCES walks(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS walks (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL DEFAULT 'Untitled Walk',
-    duration_seconds INTEGER NOT NULL DEFAULT 60,
-    heading_offset REAL NOT NULL DEFAULT 0,
-    pitch REAL NOT NULL DEFAULT 0,
-    fov REAL NOT NULL DEFAULT 90,
-    status TEXT NOT NULL DEFAULT 'draft',
-    total_frames INTEGER NOT NULL DEFAULT 0,
-    downloaded_frames INTEGER NOT NULL DEFAULT 0,
-    error_message TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS api_usage (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        walk_id VARCHAR(36),
+        api_type VARCHAR(50) NOT NULL,
+        request_count INT NOT NULL DEFAULT 1,
+        cost_usd DOUBLE NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
 
-  CREATE TABLE IF NOT EXISTS walk_points (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    walk_id TEXT NOT NULL REFERENCES walks(id) ON DELETE CASCADE,
-    sort_order INTEGER NOT NULL,
-    lat REAL NOT NULL,
-    lng REAL NOT NULL,
-    UNIQUE(walk_id, sort_order)
-  );
+    // Migrate: add columns if missing
+    const migrateCols = [
+      ['walks', 'heading_offset', 'DOUBLE NOT NULL DEFAULT 0'],
+      ['walks', 'pitch', 'DOUBLE NOT NULL DEFAULT 0'],
+      ['walks', 'fov', 'DOUBLE NOT NULL DEFAULT 90'],
+    ];
+    for (const [table, col, def] of migrateCols) {
+      try { await conn.query(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); } catch (e) {}
+    }
+  } finally {
+    conn.release();
+  }
+}
 
-  CREATE TABLE IF NOT EXISTS api_usage (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    walk_id TEXT,
-    api_type TEXT NOT NULL,
-    request_count INTEGER NOT NULL DEFAULT 1,
-    cost_usd REAL NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-`);
-
-// Migrate: add new columns if missing (for existing databases)
-try { db.exec("ALTER TABLE walks ADD COLUMN heading_offset REAL NOT NULL DEFAULT 0"); } catch (e) {}
-try { db.exec("ALTER TABLE walks ADD COLUMN pitch REAL NOT NULL DEFAULT 0"); } catch (e) {}
-try { db.exec("ALTER TABLE walks ADD COLUMN fov REAL NOT NULL DEFAULT 90"); } catch (e) {}
-
-// Prepared statements
-const stmts = {
-  insertWalk: db.prepare(`
-    INSERT INTO walks (id, name, duration_seconds, heading_offset, pitch, fov, status)
-    VALUES (@id, @name, @duration_seconds, @heading_offset, @pitch, @fov, 'draft')
-  `),
-  updateWalk: db.prepare(`
-    UPDATE walks SET name = @name, duration_seconds = @duration_seconds,
-    heading_offset = @heading_offset, pitch = @pitch, fov = @fov,
-    updated_at = datetime('now')
-    WHERE id = @id
-  `),
-  updateWalkStatus: db.prepare(`
-    UPDATE walks SET status = @status, total_frames = @total_frames,
-    downloaded_frames = @downloaded_frames, error_message = @error_message,
-    updated_at = datetime('now')
-    WHERE id = @id
-  `),
-  getWalk: db.prepare('SELECT * FROM walks WHERE id = ?'),
-  listWalks: db.prepare('SELECT * FROM walks ORDER BY created_at DESC'),
-  deleteWalk: db.prepare('DELETE FROM walks WHERE id = ?'),
-
-  insertPoint: db.prepare(`
-    INSERT INTO walk_points (walk_id, sort_order, lat, lng)
-    VALUES (@walk_id, @sort_order, @lat, @lng)
-  `),
-  deletePoints: db.prepare('DELETE FROM walk_points WHERE walk_id = ?'),
-  getPoints: db.prepare('SELECT * FROM walk_points WHERE walk_id = ? ORDER BY sort_order'),
-
-  // API usage
-  insertApiUsage: db.prepare(`
-    INSERT INTO api_usage (walk_id, api_type, request_count, cost_usd)
-    VALUES (@walk_id, @api_type, @request_count, @cost_usd)
-  `),
-  getApiUsageSummary: db.prepare(`
-    SELECT
-      api_type,
-      SUM(request_count) as total_requests,
-      SUM(cost_usd) as total_cost,
-      MIN(created_at) as first_used,
-      MAX(created_at) as last_used
-    FROM api_usage
-    GROUP BY api_type
-  `),
-  getApiUsageByMonth: db.prepare(`
-    SELECT
-      strftime('%Y-%m', created_at) as month,
-      api_type,
-      SUM(request_count) as total_requests,
-      SUM(cost_usd) as total_cost
-    FROM api_usage
-    GROUP BY month, api_type
-    ORDER BY month DESC
-  `),
-  getApiUsageTotal: db.prepare(`
-    SELECT
-      SUM(request_count) as total_requests,
-      SUM(cost_usd) as total_cost
-    FROM api_usage
-  `),
-  getApiUsageLast24h: db.prepare(`
-    SELECT
-      COALESCE(SUM(request_count), 0) as total_requests,
-      COALESCE(SUM(cost_usd), 0) as total_cost
-    FROM api_usage
-    WHERE created_at >= datetime('now', '-24 hours')
-  `),
-};
-
-module.exports = { db, stmts };
+module.exports = { pool, initDb };
