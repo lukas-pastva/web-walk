@@ -97,7 +97,11 @@ function SearchControl() {
       position: 'absolute', top: 10, left: 50, zIndex: 1000,
       background: 'white', borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
       padding: '6px 10px', maxWidth: 'calc(100% - 100px)',
-    }}>
+    }}
+    onMouseDown={(e) => e.stopPropagation()}
+    onClick={(e) => e.stopPropagation()}
+    onDblClick={(e) => e.stopPropagation()}
+    >
       <form onSubmit={handleSubmit} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         <input
           type="text"
