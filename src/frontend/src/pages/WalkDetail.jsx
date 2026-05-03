@@ -2,6 +2,74 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import MapEditor from '../components/MapEditor';
 
+const API_COSTS = { directions: 0.005, streetview: 0.007 };
+
+function haversine(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const p1 = (lat1 * Math.PI) / 180;
+  const p2 = (lat2 * Math.PI) / 180;
+  const dp = ((lat2 - lat1) * Math.PI) / 180;
+  const dl = ((lng2 - lng1) * Math.PI) / 180;
+  const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function estimateCost(points) {
+  if (!points || points.length < 2) return null;
+  // Straight-line distance (route is typically 1.3-1.5x longer)
+  let straightDist = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    straightDist += haversine(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng);
+  }
+  const routeFactor = 1.4;
+  const estRouteM = straightDist * routeFactor;
+  const directionRequests = points.length - 1;
+  const estFrames = Math.ceil(estRouteM / 15);
+  const dirCost = directionRequests * API_COSTS.directions;
+  const svCost = estFrames * API_COSTS.streetview;
+  return {
+    distanceKm: (estRouteM / 1000).toFixed(1),
+    directionRequests,
+    estFrames,
+    dirCost,
+    svCost,
+    totalCost: dirCost + svCost,
+    totalRequests: directionRequests + estFrames,
+  };
+}
+
+function CostEstimate({ points, onConfirm, onCancel }) {
+  const est = estimateCost(points);
+  if (!est) return null;
+  return (
+    <div className="cost-estimate">
+      <h4>Cost Estimate</h4>
+      <div className="cost-rows">
+        <div className="cost-row">
+          <span>Route distance (est.)</span>
+          <span>{est.distanceKm} km</span>
+        </div>
+        <div className="cost-row">
+          <span>Directions API ({est.directionRequests} req)</span>
+          <span>${est.dirCost.toFixed(3)}</span>
+        </div>
+        <div className="cost-row">
+          <span>Street View ({est.estFrames} frames)</span>
+          <span>${est.svCost.toFixed(2)}</span>
+        </div>
+        <div className="cost-row cost-total">
+          <span>Total ({est.totalRequests} requests)</span>
+          <span>${est.totalCost.toFixed(2)}</span>
+        </div>
+      </div>
+      <div className="cost-actions">
+        <button className="btn-primary" onClick={onConfirm}>Confirm Generate</button>
+        <button className="btn-secondary" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 function LogWindow({ walkId, visible }) {
   const [logs, setLogs] = useState([]);
   const bottomRef = useRef(null);
@@ -66,6 +134,7 @@ export default function WalkDetail() {
   const [loading, setLoading] = useState(true);
   const [rateLimitError, setRateLimitError] = useState(null);
   const [showLogs, setShowLogs] = useState(false);
+  const [showEstimate, setShowEstimate] = useState(false);
 
   const fetchWalk = async () => {
     try {
@@ -99,7 +168,12 @@ export default function WalkDetail() {
     }
   }, [walk?.status]);
 
-  const handleGenerate = async () => {
+  const handleGenerateClick = () => {
+    setShowEstimate(true);
+  };
+
+  const handleGenerateConfirm = async () => {
+    setShowEstimate(false);
     setRateLimitError(null);
     setShowLogs(true);
     const resp = await fetch(`/api/walks/${id}/generate`, { method: 'POST' });
@@ -121,7 +195,7 @@ export default function WalkDetail() {
   const handleReprocess = async () => {
     await fetch(`/api/walks/${id}/reprocess`, { method: 'POST' });
     await fetchWalk();
-    handleGenerate();
+    setShowEstimate(true);
   };
 
   const handleDeleteVideo = async () => {
@@ -217,13 +291,13 @@ export default function WalkDetail() {
 
             <div className="detail-actions">
               {(walk.status === 'draft' || walk.status === 'error') && walk.points?.length >= 2 && (
-                <button className="btn-primary" onClick={handleGenerate}>
+                <button className="btn-primary" onClick={handleGenerateClick}>
                   Generate Video
                 </button>
               )}
               {isDone && (
                 <>
-                  <button className="btn-primary" onClick={handleGenerate}>
+                  <button className="btn-primary" onClick={handleGenerateClick}>
                     Regenerate
                   </button>
                   <button className="btn-danger btn-small" onClick={handleDeleteVideo}>
@@ -248,6 +322,16 @@ export default function WalkDetail() {
               )}
             </div>
           </div>
+
+          {showEstimate && (
+            <div className="info-card">
+              <CostEstimate
+                points={walk.points}
+                onConfirm={handleGenerateConfirm}
+                onCancel={() => setShowEstimate(false)}
+              />
+            </div>
+          )}
 
           <LogWindow walkId={id} visible={showLogs} />
 

@@ -227,21 +227,22 @@ app.get('/api/gallery', async (req, res) => {
 });
 
 // Daily API request limit
-const DAILY_REQUEST_LIMIT = parseInt(process.env.DAILY_API_LIMIT) || 5000;
+const DAILY_COST_LIMIT = parseFloat(process.env.DAILY_COST_LIMIT) || 50;
 
 // Generate video for a walk
 app.post('/api/walks/:id/generate', async (req, res) => {
   try {
     const [usage] = await pool.query(
-      `SELECT COALESCE(SUM(request_count), 0) as total_requests
+      `SELECT COALESCE(SUM(request_count), 0) as total_requests,
+              COALESCE(SUM(cost_usd), 0) as total_cost
        FROM api_usage WHERE created_at >= NOW() - INTERVAL 24 HOUR`
     );
-    if (usage[0].total_requests >= DAILY_REQUEST_LIMIT) {
+    if (usage[0].total_cost >= DAILY_COST_LIMIT) {
       return res.status(429).json({
-        error: 'Daily API limit reached',
-        message: `Limit ${DAILY_REQUEST_LIMIT} requests per 24 hours exceeded (${usage[0].total_requests} used). Try again later.`,
-        requests_used: usage[0].total_requests,
-        limit: DAILY_REQUEST_LIMIT,
+        error: 'Daily cost limit reached',
+        message: `Daily limit of $${DAILY_COST_LIMIT} exceeded ($${usage[0].total_cost.toFixed(2)} used). Try again later.`,
+        cost_used: usage[0].total_cost,
+        limit: DAILY_COST_LIMIT,
       });
     }
 
@@ -324,9 +325,10 @@ app.get('/api/usage', async (req, res) => {
       byMonth,
       total: total[0],
       rateLimit: {
-        used: last24h[0].total_requests,
-        limit: DAILY_REQUEST_LIMIT,
-        remaining: Math.max(0, DAILY_REQUEST_LIMIT - last24h[0].total_requests),
+        costUsed: last24h[0].total_cost,
+        costLimit: DAILY_COST_LIMIT,
+        costRemaining: Math.max(0, DAILY_COST_LIMIT - last24h[0].total_cost),
+        requestsUsed: last24h[0].total_requests,
       },
     });
   } catch (err) {

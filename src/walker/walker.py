@@ -107,15 +107,15 @@ API_COSTS = {
     "streetview": 0.007,      # $7 per 1000 requests
 }
 
-# Daily limit
-DAILY_REQUEST_LIMIT = int(os.environ.get("DAILY_API_LIMIT", "5000"))
+# Daily cost limit in USD
+DAILY_COST_LIMIT = float(os.environ.get("DAILY_COST_LIMIT", "50"))
 
 
-def get_usage_last_24h():
+def get_cost_last_24h():
     conn = get_db()
     cur = conn.cursor(dictionary=True)
     cur.execute(
-        "SELECT COALESCE(SUM(request_count), 0) as total FROM api_usage WHERE created_at >= NOW() - INTERVAL 24 HOUR"
+        "SELECT COALESCE(SUM(cost_usd), 0) as total FROM api_usage WHERE created_at >= NOW() - INTERVAL 24 HOUR"
     )
     row = cur.fetchone()
     cur.close()
@@ -123,10 +123,11 @@ def get_usage_last_24h():
     return row["total"]
 
 
-def check_rate_limit(walk_id, needed=1):
-    used = get_usage_last_24h()
-    if used + needed > DAILY_REQUEST_LIMIT:
-        msg = f"Daily API limit reached ({used}/{DAILY_REQUEST_LIMIT}). Wait 24 hours."
+def check_rate_limit(walk_id, needed=1, api_type="streetview"):
+    used = get_cost_last_24h()
+    est_cost = needed * API_COSTS.get(api_type, 0.007)
+    if used + est_cost > DAILY_COST_LIMIT:
+        msg = f"Daily cost limit reached (${used:.2f}/${DAILY_COST_LIMIT:.0f}). Wait 24 hours."
         update_walk_status(walk_id, "error", error_message=msg)
         raise Exception(msg)
 
@@ -320,7 +321,7 @@ def main(walk_id):
     try:
         # 1. Get multi-segment route
         log_message(walk_id, f"Getting directions for {len(points)} waypoints...")
-        check_rate_limit(walk_id, len(points) - 1)
+        check_rate_limit(walk_id, len(points) - 1, "directions")
         polyline_points = get_multi_segment_route(points, walk_id)
         log_message(walk_id, f"Route has {len(polyline_points)} polyline points")
 
@@ -332,7 +333,7 @@ def main(walk_id):
         log_message(walk_id, f"Total frames to download: {len(interpolated)}")
 
         # Check rate limit before downloading all frames
-        check_rate_limit(walk_id, len(interpolated))
+        check_rate_limit(walk_id, len(interpolated), "streetview")
         log_message(walk_id, "Rate limit check passed, starting downloads...")
 
         # 3. Download Street View images

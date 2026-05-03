@@ -30,35 +30,39 @@ export default function ApiUsage() {
 
       <div className="usage-summary">
         <div className="info-card">
-          <h3>Rate Limit (24h)</h3>
+          <h3>Daily Cost Limit (24h)</h3>
           {data.rateLimit && (
             <>
               <div className="usage-total">
                 <div className="usage-stat">
-                  <span className="usage-number">{data.rateLimit.used.toLocaleString()}</span>
-                  <span className="usage-label">Used (24h)</span>
+                  <span className="usage-number">${(data.rateLimit.costUsed || 0).toFixed(2)}</span>
+                  <span className="usage-label">Spent (24h)</span>
                 </div>
                 <div className="usage-stat">
-                  <span className="usage-number">{data.rateLimit.remaining.toLocaleString()}</span>
+                  <span className="usage-number">${(data.rateLimit.costRemaining || 0).toFixed(2)}</span>
                   <span className="usage-label">Remaining</span>
                 </div>
                 <div className="usage-stat">
-                  <span className="usage-number">{data.rateLimit.limit.toLocaleString()}</span>
+                  <span className="usage-number">${(data.rateLimit.costLimit || 0).toFixed(0)}</span>
                   <span className="usage-label">Daily Limit</span>
+                </div>
+                <div className="usage-stat">
+                  <span className="usage-number">{(data.rateLimit.requestsUsed || 0).toLocaleString()}</span>
+                  <span className="usage-label">Requests (24h)</span>
                 </div>
               </div>
               <div className="progress-bar" style={{ marginTop: 16 }}>
                 <div
                   className="progress-fill"
                   style={{
-                    width: `${Math.min(100, (data.rateLimit.used / data.rateLimit.limit) * 100)}%`,
-                    background: data.rateLimit.remaining === 0 ? 'var(--danger)' : 'var(--accent)',
+                    width: `${Math.min(100, ((data.rateLimit.costUsed || 0) / (data.rateLimit.costLimit || 50)) * 100)}%`,
+                    background: (data.rateLimit.costRemaining || 0) <= 0 ? 'var(--danger)' : 'var(--accent)',
                   }}
                 />
               </div>
-              {data.rateLimit.remaining === 0 && (
+              {(data.rateLimit.costRemaining || 0) <= 0 && (
                 <p style={{ color: 'var(--danger)', marginTop: 12, fontSize: '0.9rem' }}>
-                  Limit reached! Generation is blocked for 24 hours.
+                  Daily cost limit reached! Generation is blocked for 24 hours.
                 </p>
               )}
             </>
