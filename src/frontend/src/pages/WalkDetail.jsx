@@ -72,6 +72,8 @@ function CostEstimate({ points, onConfirm, onCancel }) {
 
 function LogWindow({ walkId, visible }) {
   const [logs, setLogs] = useState([]);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const bottomRef = useRef(null);
   const sinceRef = useRef('1970-01-01');
 
@@ -104,11 +106,39 @@ function LogWindow({ walkId, visible }) {
     }
   }, [visible]);
 
+  // Escape to exit fullscreen
+  useEffect(() => {
+    if (!fullscreen) return;
+    const handler = (e) => { if (e.key === 'Escape') setFullscreen(false); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [fullscreen]);
+
+  const handleCopy = () => {
+    const text = logs.map((l) =>
+      `${new Date(l.created_at).toLocaleTimeString()} [${l.level}] ${l.message}`
+    ).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   if (!visible) return null;
 
   return (
-    <div className="info-card log-card">
-      <h3>Processing Log</h3>
+    <div className={`info-card log-card ${fullscreen ? 'log-fullscreen' : ''}`}>
+      <div className="log-header">
+        <h3>Processing Log</h3>
+        <div className="log-actions">
+          <button className="log-btn" onClick={handleCopy} title="Copy logs">
+            {copied ? 'Copied!' : 'Copy'}
+          </button>
+          <button className="log-btn" onClick={() => setFullscreen((v) => !v)} title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
+            {fullscreen ? '\u2716' : '\u2922'}
+          </button>
+        </div>
+      </div>
       <div className="log-window">
         {logs.length === 0 && (
           <div className="log-line log-info">Waiting for logs...</div>
