@@ -12,8 +12,19 @@ function applyTheme(mode) {
   document.documentElement.setAttribute('data-theme', resolved);
 }
 
+function useIsMobile() {
+  const [mobile, setMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const handler = () => setMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return mobile;
+}
+
 export default function Sidebar({ open, onToggle }) {
   const [theme, setTheme] = useState(() => localStorage.getItem(THEME_KEY) || 'auto');
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     applyTheme(theme);
@@ -30,6 +41,9 @@ export default function Sidebar({ open, onToggle }) {
     setTheme((prev) => MODES[(MODES.indexOf(prev) + 1) % MODES.length]);
   };
 
+  // On mobile: always show nav as bottom bar
+  const showNav = isMobile || open;
+
   return (
     <aside className={`sidebar ${open ? 'open' : 'closed'}`}>
       <div className="sidebar-header">
@@ -38,23 +52,29 @@ export default function Sidebar({ open, onToggle }) {
           {open ? '\u2039' : '\u203A'}
         </button>
       </div>
-      {open && (
+      {showNav && (
         <nav className="sidebar-nav">
           <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end>
             <span className="nav-icon">&#9776;</span>
-            <span>My Walks</span>
+            <span>Walks</span>
           </NavLink>
           <NavLink to="/new" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
             <span className="nav-icon">+</span>
-            <span>New Walk</span>
+            <span>New</span>
           </NavLink>
           <NavLink to="/usage" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
             <span className="nav-icon">$</span>
-            <span>API Usage</span>
+            <span>Usage</span>
           </NavLink>
+          {isMobile && (
+            <button className="nav-link" onClick={cycleTheme} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+              <span className="nav-icon">{ICONS[theme]}</span>
+              <span>{theme.charAt(0).toUpperCase() + theme.slice(1)}</span>
+            </button>
+          )}
         </nav>
       )}
-      {open && (
+      {!isMobile && open && (
         <button className="theme-toggle" onClick={cycleTheme} style={{ marginTop: 'auto' }}>
           <span>{ICONS[theme]}</span>
           <span>{theme.charAt(0).toUpperCase() + theme.slice(1)}</span>
