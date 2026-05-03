@@ -34,66 +34,104 @@ function SearchControl() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [showResults, setShowResults] = useState(false);
   const timeoutRef = useRef(null);
+  const wrapperRef = useRef(null);
 
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    if (!query.trim()) return;
+  // Close dropdown on outside click
+  React.useEffect(() => {
+    const handler = (e) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
+        setShowResults(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const doSearch = async (q) => {
+    if (!q || q.trim().length < 5) { setResults([]); setShowResults(false); return; }
     setSearching(true);
     try {
+      // Use current map bounds to bias results to visible area
+      const bounds = map.getBounds();
+      const viewbox = `${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()},${bounds.getSouth()}`;
       const resp = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=7&viewbox=${viewbox}&bounded=0`
       );
       const data = await resp.json();
       setResults(data);
-      if (data.length > 0) {
-        map.setView([parseFloat(data[0].lat), parseFloat(data[0].lon)], 16);
-        setResults([]);
-      }
+      setShowResults(data.length > 0);
     } catch (err) {
       console.error('Search failed:', err);
     }
     setSearching(false);
   };
 
+  const handleChange = (e) => {
+    const val = e.target.value;
+    setQuery(val);
+    clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => doSearch(val), 350);
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    clearTimeout(timeoutRef.current);
+    doSearch(query);
+  };
+
   const handleSelect = (item) => {
     map.setView([parseFloat(item.lat), parseFloat(item.lon)], 16);
     setResults([]);
+    setShowResults(false);
     setQuery(item.display_name.split(',').slice(0, 2).join(','));
   };
 
+  const handleFocus = () => {
+    if (results.length > 0) setShowResults(true);
+  };
+
   return (
-    <div className="map-search" style={{
+    <div ref={wrapperRef} className="map-search" style={{
       position: 'absolute', top: 10, left: 50, zIndex: 1000,
       background: 'white', borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
       padding: '6px 10px', maxWidth: 'calc(100% - 100px)',
     }}>
-      <form onSubmit={handleSearch} style={{ display: 'flex', gap: 6 }}>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         <input
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search address or place..."
+          onChange={handleChange}
+          onFocus={handleFocus}
+          placeholder="Type 5+ chars to search..."
           style={{
             border: '1px solid #ddd', borderRadius: 4, padding: '6px 10px',
-            fontSize: 14, width: 250, outline: 'none',
+            fontSize: 14, width: 280, outline: 'none',
           }}
         />
-        <button type="submit" disabled={searching} style={{
-          background: '#4a90d9', color: 'white', border: 'none',
-          borderRadius: 4, padding: '6px 12px', cursor: 'pointer', fontSize: 14,
-        }}>
-          {searching ? '...' : 'Search'}
-        </button>
+        {searching && <span style={{ fontSize: 12, color: '#999' }}>...</span>}
       </form>
-      {results.length > 1 && (
-        <ul style={{ listStyle: 'none', margin: '6px 0 0', padding: 0, maxHeight: 200, overflow: 'auto' }}>
+      {showResults && results.length > 0 && (
+        <ul style={{
+          listStyle: 'none', margin: '6px 0 0', padding: 0,
+          maxHeight: 240, overflow: 'auto',
+          borderTop: '1px solid #eee',
+        }}>
           {results.map((r) => (
             <li key={r.place_id} onClick={() => handleSelect(r)} style={{
-              padding: '6px 8px', cursor: 'pointer', fontSize: 13,
-              borderBottom: '1px solid #eee',
-            }}>
-              {r.display_name}
+              padding: '8px 8px', cursor: 'pointer', fontSize: 13,
+              borderBottom: '1px solid #eee', lineHeight: 1.3,
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.background = '#f0f4ff'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <div style={{ fontWeight: 600, fontSize: 13 }}>
+                {r.display_name.split(',').slice(0, 2).join(',')}
+              </div>
+              <div style={{ color: '#888', fontSize: 11, marginTop: 2 }}>
+                {r.display_name.split(',').slice(2).join(',').trim()}
+              </div>
             </li>
           ))}
         </ul>

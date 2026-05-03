@@ -9,6 +9,12 @@ html, body, #root {
 }
 
 :root {
+  --sidebar-width: 240px;
+  --sidebar-collapsed: 48px;
+  --radius: 10px;
+}
+
+[data-theme="dark"] {
   --bg-primary: #0f1923;
   --bg-secondary: #1a2736;
   --bg-card: #1e2d3d;
@@ -21,9 +27,21 @@ html, body, #root {
   --warning: #e6a23c;
   --danger: #f56c6c;
   --border: #2a3a4a;
-  --sidebar-width: 240px;
-  --sidebar-collapsed: 48px;
-  --radius: 10px;
+}
+
+[data-theme="light"] {
+  --bg-primary: #f0f2f5;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-hover: #e8ecf0;
+  --text-primary: #1a2030;
+  --text-secondary: #5a6a7a;
+  --accent: #4a90d9;
+  --accent-hover: #3a7bc8;
+  --success: #52a520;
+  --warning: #cf8a1e;
+  --danger: #e04040;
+  --border: #d0d8e0;
 }
 
 body {
@@ -634,4 +652,26 @@ button:disabled {
 
 .api-type-cell {
   font-weight: 600;
+}
+
+/* Theme Toggle */
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  margin: 8px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  cursor: pointer;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+
+.theme-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
 }

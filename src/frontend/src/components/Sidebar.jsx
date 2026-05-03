@@ -1,7 +1,35 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 
+const THEME_KEY = 'web-walk-theme';
+const MODES = ['auto', 'dark', 'light'];
+const ICONS = { auto: '\u25D0', dark: '\u263D', light: '\u2600' };
+
+function applyTheme(mode) {
+  const resolved = mode === 'auto'
+    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : mode;
+  document.documentElement.setAttribute('data-theme', resolved);
+}
+
 export default function Sidebar({ open, onToggle }) {
+  const [theme, setTheme] = useState(() => localStorage.getItem(THEME_KEY) || 'auto');
+
+  useEffect(() => {
+    applyTheme(theme);
+    localStorage.setItem(THEME_KEY, theme);
+    if (theme === 'auto') {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      const handler = () => applyTheme('auto');
+      mq.addEventListener('change', handler);
+      return () => mq.removeEventListener('change', handler);
+    }
+  }, [theme]);
+
+  const cycleTheme = () => {
+    setTheme((prev) => MODES[(MODES.indexOf(prev) + 1) % MODES.length]);
+  };
+
   return (
     <aside className={`sidebar ${open ? 'open' : 'closed'}`}>
       <div className="sidebar-header">
@@ -25,6 +53,12 @@ export default function Sidebar({ open, onToggle }) {
             <span>API Usage</span>
           </NavLink>
         </nav>
+      )}
+      {open && (
+        <button className="theme-toggle" onClick={cycleTheme} style={{ marginTop: 'auto' }}>
+          <span>{ICONS[theme]}</span>
+          <span>{theme.charAt(0).toUpperCase() + theme.slice(1)}</span>
+        </button>
       )}
     </aside>
   );
