@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import MapEditor from '../components/MapEditor';
 
 const API_COSTS = { directions: 0.005, streetview: 0.007 };
@@ -203,6 +203,7 @@ function LogWindow({ walkId, visible }) {
 export default function WalkDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [walk, setWalk] = useState(null);
   const [loading, setLoading] = useState(true);
   const [rateLimitError, setRateLimitError] = useState(null);
@@ -226,6 +227,14 @@ export default function WalkDetail() {
   useEffect(() => {
     fetchWalk();
   }, [id]);
+
+  // Auto-show regenerate dialog when redirected from editor after aspect ratio change
+  useEffect(() => {
+    if (searchParams.get('regenerate') === '1' && walk && walk.status === 'done') {
+      setShowEstimate(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [walk?.id]);
 
   // Poll while processing
   useEffect(() => {

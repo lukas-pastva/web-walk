@@ -17,6 +17,8 @@ export default function WalkEditor() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(isEdit);
   const [walkStatus, setWalkStatus] = useState('draft');
+  const [originalAspectRatio, setOriginalAspectRatio] = useState(null);
+  const [originalDuration, setOriginalDuration] = useState(null);
 
   useEffect(() => {
     if (isEdit) {
@@ -29,6 +31,8 @@ export default function WalkEditor() {
           setPitch(walk.pitch || 0);
           setFov(walk.fov || 90);
           setAspectRatio(walk.aspect_ratio || '1:1');
+          setOriginalAspectRatio(walk.aspect_ratio || '1:1');
+          setOriginalDuration(walk.duration_seconds);
           setPoints(walk.points.map((p) => ({ lat: p.lat, lng: p.lng })));
           setWalkStatus(walk.status);
           setLoading(false);
@@ -96,7 +100,11 @@ export default function WalkEditor() {
         });
       }
       const walk = await resp.json();
-      navigate(`/walk/${walk.id}`);
+      const needsRegenerate = !isDraft && (
+        (originalAspectRatio && aspectRatio !== originalAspectRatio) ||
+        (originalDuration !== null && parseInt(duration) !== originalDuration)
+      );
+      navigate(`/walk/${walk.id}${needsRegenerate ? '?regenerate=1' : ''}`);
     } catch (err) {
       console.error('Failed to save:', err);
     }
