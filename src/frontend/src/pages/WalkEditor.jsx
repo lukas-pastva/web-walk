@@ -17,18 +17,30 @@ export default function WalkEditor() {
   const [loading, setLoading] = useState(isEdit);
 
   useEffect(() => {
-    if (!isEdit) return;
-    fetch(`/api/walks/${id}`)
-      .then((r) => r.json())
-      .then((walk) => {
-        setName(walk.name);
-        setDuration(walk.duration_seconds);
-        setHeadingOffset(walk.heading_offset || 0);
-        setPitch(walk.pitch || 0);
-        setFov(walk.fov || 90);
-        setPoints(walk.points.map((p) => ({ lat: p.lat, lng: p.lng })));
-        setLoading(false);
-      });
+    if (isEdit) {
+      fetch(`/api/walks/${id}`)
+        .then((r) => r.json())
+        .then((walk) => {
+          setName(walk.name);
+          setDuration(walk.duration_seconds);
+          setHeadingOffset(walk.heading_offset || 0);
+          setPitch(walk.pitch || 0);
+          setFov(walk.fov || 90);
+          setPoints(walk.points.map((p) => ({ lat: p.lat, lng: p.lng })));
+          setLoading(false);
+        });
+    } else {
+      // Load defaults from settings for new walks
+      fetch('/api/settings')
+        .then((r) => r.json())
+        .then((s) => {
+          if (s.default_duration) setDuration(Number(s.default_duration));
+          if (s.default_heading_offset) setHeadingOffset(Number(s.default_heading_offset));
+          if (s.default_pitch) setPitch(Number(s.default_pitch));
+          if (s.default_fov) setFov(Number(s.default_fov));
+        })
+        .catch(() => {});
+    }
   }, [id, isEdit]);
 
   const handleMapClick = useCallback((latlng) => {

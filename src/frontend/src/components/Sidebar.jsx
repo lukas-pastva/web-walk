@@ -70,6 +70,10 @@ export default function Sidebar({ open, onToggle }) {
             <span className="nav-icon">$</span>
             <span>Usage</span>
           </NavLink>
+          <NavLink to="/settings" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            <span className="nav-icon">&#9881;</span>
+            <span>Settings</span>
+          </NavLink>
           <NavLink to="/help" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
             <span className="nav-icon">?</span>
             <span>Help</span>

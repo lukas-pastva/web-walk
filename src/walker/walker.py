@@ -13,6 +13,7 @@ import hmac
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -276,8 +277,65 @@ def sign_url(url_to_sign):
 IMAGE_SIZE = "2048x2048" if SIGNING_SECRET else "640x640"
 
 
+def cache_key_parts(lat, lng, heading, pitch, fov):
+    """Round coordinates for cache lookup: ~1m precision for lat/lng, 1 degree for heading."""
+    return (round(lat, 5), round(lng, 5), round(heading), round(pitch), round(fov))
+
+
+def check_cache(lat, lng, heading, pitch, fov):
+    """Check if image exists in cache. Returns file_path or None."""
+    lat_k, lng_k, hdg_k, pitch_k, fov_k = cache_key_parts(lat, lng, heading, pitch, fov)
+    try:
+        conn = get_db()
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """SELECT file_path FROM streetview_cache
+               WHERE lat_key = %s AND lng_key = %s AND heading_key = %s
+                 AND pitch = %s AND fov = %s AND size = %s""",
+            (lat_k, lng_k, hdg_k, pitch_k, fov_k, IMAGE_SIZE),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row and os.path.exists(row["file_path"]):
+            return row["file_path"]
+    except Exception:
+        pass
+    return None
+
+
+def save_to_cache(lat, lng, heading, pitch, fov, file_path):
+    """Save image info to cache DB."""
+    lat_k, lng_k, hdg_k, pitch_k, fov_k = cache_key_parts(lat, lng, heading, pitch, fov)
+    try:
+        file_size = os.path.getsize(file_path)
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO streetview_cache (lat_key, lng_key, heading_key, pitch, fov, size, file_path, file_size)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+               ON DUPLICATE KEY UPDATE file_path = %s, file_size = %s""",
+            (lat_k, lng_k, hdg_k, pitch_k, fov_k, IMAGE_SIZE, file_path, file_size, file_path, file_size),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception:
+        pass
+
+
+CACHE_DIR = os.path.join(OUTPUT_DIR, "cache", "streetview")
+
+
 def download_streetview(lat, lng, heading, output_path, walk_id=None, pitch=0, fov=90):
-    """Download a Street View image. Returns True if image was saved."""
+    """Download a Street View image. Uses cache if available. Returns (True, from_cache) or (False, False)."""
+
+    # Check cache first
+    cached = check_cache(lat, lng, heading, pitch, fov)
+    if cached:
+        shutil.copy2(cached, output_path)
+        return True, True
+
     base_url = "https://maps.googleapis.com/maps/api/streetview"
     params = {
         "size": IMAGE_SIZE,
@@ -291,12 +349,21 @@ def download_streetview(lat, lng, heading, output_path, walk_id=None, pitch=0, f
     url = sign_url(url)
     resp = requests.get(url, timeout=30)
     if resp.status_code != 200:
-        return False
+        return False, False
     if len(resp.content) < 5000:
-        return False
+        return False, False
     with open(output_path, "wb") as f:
         f.write(resp.content)
-    return True
+
+    # Save to persistent cache
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    lat_k, lng_k, hdg_k, pitch_k, fov_k = cache_key_parts(lat, lng, heading, pitch, fov)
+    cache_filename = f"{lat_k}_{lng_k}_{hdg_k}_{pitch_k}_{fov_k}_{IMAGE_SIZE}.jpg"
+    cache_path = os.path.join(CACHE_DIR, cache_filename)
+    shutil.copy2(output_path, cache_path)
+    save_to_cache(lat, lng, heading, pitch, fov, cache_path)
+
+    return True, False
 
 
 def make_video(frames_dir, output_path, num_frames, duration_seconds):
@@ -360,10 +427,11 @@ def main(walk_id):
         check_rate_limit(walk_id, len(interpolated), "streetview")
         log_message(walk_id, "Rate limit check passed, starting downloads...")
 
-        # 3. Download Street View images
+        # 3. Download Street View images (with cache)
         def download_frame(args):
             idx, lat, lng, hdg, path = args
-            return idx, download_streetview(lat, lng, hdg, path, walk_id, walk_pitch, walk_fov)
+            success, from_cache = download_streetview(lat, lng, hdg, path, walk_id, walk_pitch, walk_fov)
+            return idx, success, from_cache
 
         tasks = []
         for i in range(len(interpolated)):
@@ -377,23 +445,28 @@ def main(walk_id):
             tasks.append((i, lat, lng, hdg, str(frame_path)))
 
         downloaded = 0
+        from_cache = 0
         failed = 0
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(download_frame, t): t for t in tasks}
             for future in as_completed(futures):
-                idx, success = future.result()
+                idx, success, cached = future.result()
                 if success:
                     downloaded += 1
+                    if cached:
+                        from_cache += 1
                 else:
                     failed += 1
                 total_done = downloaded + failed
                 if total_done % 10 == 0 or total_done == len(tasks):
                     save_progress(walk_id, downloaded)
-                    log_message(walk_id, f"Progress: {downloaded} downloaded, {failed} failed / {len(tasks)} total ({int(total_done/len(tasks)*100)}%)")
+                    log_message(walk_id, f"Progress: {downloaded} downloaded ({from_cache} cached), {failed} failed / {len(tasks)} total ({int(total_done/len(tasks)*100)}%)")
 
         save_progress(walk_id, downloaded)
-        log_api_usage(walk_id, "streetview", len(tasks))
-        log_message(walk_id, f"Download complete: {downloaded} frames OK, {failed} failed")
+        new_downloads = downloaded - from_cache
+        if new_downloads > 0:
+            log_api_usage(walk_id, "streetview", new_downloads)
+        log_message(walk_id, f"Download complete: {downloaded} frames OK ({from_cache} from cache, {new_downloads} new), {failed} failed")
 
         if downloaded == 0:
             raise Exception("No Street View images found along this route")

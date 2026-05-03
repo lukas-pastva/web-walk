@@ -66,6 +66,30 @@ async function initDb() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
 
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS settings (
+        \`key\` VARCHAR(100) PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS streetview_cache (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        lat_key DOUBLE NOT NULL,
+        lng_key DOUBLE NOT NULL,
+        heading_key INT NOT NULL,
+        pitch INT NOT NULL,
+        fov INT NOT NULL,
+        size VARCHAR(20) NOT NULL,
+        file_path VARCHAR(500) NOT NULL,
+        file_size INT NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_sv_cache (lat_key, lng_key, heading_key, pitch, fov, size)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
     // Migrate: add columns if missing
     const migrateCols = [
       ['walks', 'heading_offset', 'DOUBLE NOT NULL DEFAULT 0'],

@@ -19,7 +19,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, '../../frontend/dist')));
 
 // Ensure directories exist
-for (const dir of ['frames', 'videos']) {
+for (const dir of ['frames', 'videos', 'cache/streetview']) {
   fs.mkdirSync(path.join(OUTPUT_DIR, dir), { recursive: true });
 }
 
@@ -347,6 +347,64 @@ app.get('/api/walks/:id/logs', async (req, res) => {
       [req.params.id, since]
     );
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Settings ---
+
+app.get('/api/settings', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT `key`, value FROM settings');
+    const settings = {};
+    for (const row of rows) {
+      settings[row.key] = row.value;
+    }
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/settings', async (req, res) => {
+  try {
+    const entries = Object.entries(req.body);
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      for (const [key, value] of entries) {
+        await conn.query(
+          'INSERT INTO settings (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?, updated_at = NOW()',
+          [key, String(value), String(value)]
+        );
+      }
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+    const [rows] = await pool.query('SELECT `key`, value FROM settings');
+    const settings = {};
+    for (const row of rows) {
+      settings[row.key] = row.value;
+    }
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Cache stats ---
+
+app.get('/api/cache/stats', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT COUNT(*) as total_images, COALESCE(SUM(file_size), 0) as total_bytes FROM streetview_cache'
+    );
+    res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
