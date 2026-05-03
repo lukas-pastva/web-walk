@@ -7,12 +7,16 @@ Reads walk config from MySQL database, downloads Street View images
 along the multi-point route, and stitches them into a video.
 """
 
+import base64
+import hashlib
+import hmac
 import json
 import math
 import os
 import subprocess
 import sys
 import time
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -21,6 +25,7 @@ import requests
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/data")
 API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+SIGNING_SECRET = os.environ.get("GOOGLE_SIGNING_SECRET", "")
 
 DB_CONFIG = {
     "host": os.environ.get("DB_HOST", "localhost"),
@@ -255,18 +260,36 @@ def get_multi_segment_route(points, walk_id=None):
     return all_polyline_points
 
 
+def sign_url(url_to_sign):
+    """Sign a Google Maps API URL with the signing secret."""
+    if not SIGNING_SECRET:
+        return url_to_sign
+    parsed = urllib.parse.urlparse(url_to_sign)
+    url_to_sign_path = parsed.path + "?" + parsed.query
+    decoded_key = base64.urlsafe_b64decode(SIGNING_SECRET)
+    signature = hmac.new(decoded_key, url_to_sign_path.encode("utf-8"), hashlib.sha1)
+    encoded_sig = base64.urlsafe_b64encode(signature.digest()).decode("utf-8")
+    return url_to_sign + "&signature=" + encoded_sig
+
+
+# Use high-res if signing secret is available
+IMAGE_SIZE = "2048x2048" if SIGNING_SECRET else "640x640"
+
+
 def download_streetview(lat, lng, heading, output_path, walk_id=None, pitch=0, fov=90):
     """Download a Street View image. Returns True if image was saved."""
-    url = "https://maps.googleapis.com/maps/api/streetview"
+    base_url = "https://maps.googleapis.com/maps/api/streetview"
     params = {
-        "size": "640x640",
+        "size": IMAGE_SIZE,
         "location": f"{lat},{lng}",
         "heading": f"{heading:.1f}",
         "fov": str(fov),
         "pitch": str(pitch),
         "key": API_KEY,
     }
-    resp = requests.get(url, params=params, timeout=30)
+    url = base_url + "?" + urllib.parse.urlencode(params)
+    url = sign_url(url)
+    resp = requests.get(url, timeout=30)
     if resp.status_code != 200:
         return False
     if len(resp.content) < 5000:
@@ -310,6 +333,7 @@ def main(walk_id):
 
     log_message(walk_id, f"Starting walk processing: {walk.get('name', 'Untitled')}")
     log_message(walk_id, f"Settings: duration={duration_seconds}s, heading_offset={heading_offset}, pitch={walk_pitch}, fov={walk_fov}")
+    log_message(walk_id, f"Image size: {IMAGE_SIZE} ({'signed URLs' if SIGNING_SECRET else 'unsigned'})")
     log_message(walk_id, f"Waypoints: {len(points)}")
     update_walk_status(walk_id, "processing")
 

@@ -33,6 +33,7 @@ services:
       - PORT=8080
       - OUTPUT_DIR=/data
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GOOGLE_SIGNING_SECRET=${GOOGLE_SIGNING_SECRET:-}
       - DB_HOST=db
       - DB_USER=${DB_USER:-walk}
       - DB_PASSWORD=${DB_PASSWORD:-walkpass}

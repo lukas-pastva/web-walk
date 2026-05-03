@@ -271,6 +271,7 @@ app.post('/api/walks/:id/generate', async (req, res) => {
         ...process.env,
         OUTPUT_DIR,
         GOOGLE_API_KEY: process.env.GOOGLE_API_KEY || '',
+        GOOGLE_SIGNING_SECRET: process.env.GOOGLE_SIGNING_SECRET || '',
         DB_HOST: process.env.DB_HOST || 'localhost',
         DB_USER: process.env.DB_USER || 'root',
         DB_PASSWORD: process.env.DB_PASSWORD || '',
