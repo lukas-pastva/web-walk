@@ -74,12 +74,18 @@ function LogWindow({ walkId, visible }) {
   const [logs, setLogs] = useState([]);
   const [fullscreen, setFullscreen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const bottomRef = useRef(null);
+  const logWindowRef = useRef(null);
   const sinceRef = useRef('1970-01-01');
+  const wasAtBottomRef = useRef(true);
 
   useEffect(() => {
     if (!visible) return;
     const fetchLogs = async () => {
+      // Check if scrolled to bottom before adding new logs
+      const el = logWindowRef.current;
+      if (el) {
+        wasAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+      }
       try {
         const resp = await fetch(`/api/walks/${walkId}/logs?since=${encodeURIComponent(sinceRef.current)}`);
         const data = await resp.json();
@@ -95,7 +101,10 @@ function LogWindow({ walkId, visible }) {
   }, [walkId, visible]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = logWindowRef.current;
+    if (el && wasAtBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [logs]);
 
   // Reset when walk restarts
@@ -139,7 +148,7 @@ function LogWindow({ walkId, visible }) {
           </button>
         </div>
       </div>
-      <div className="log-window">
+      <div className="log-window" ref={logWindowRef}>
         {logs.length === 0 && (
           <div className="log-line log-info">Waiting for logs...</div>
         )}
@@ -151,7 +160,6 @@ function LogWindow({ walkId, visible }) {
             <span className="log-msg">{l.message}</span>
           </div>
         ))}
-        <div ref={bottomRef} />
       </div>
     </div>
   );
