@@ -389,17 +389,41 @@ def download_streetview(lat, lng, heading, output_path, walk_id=None, pitch=0, f
     return True, False
 
 
-def make_video(frames_dir, output_path, num_frames, duration_seconds):
+def get_crop_filter(aspect_ratio):
+    """Get FFmpeg crop filter for the given aspect ratio. Crops from center, removes black borders."""
+    ratios = {
+        "1:1": (1, 1),
+        "3:2": (3, 2),
+        "4:3": (4, 3),
+        "16:9": (16, 9),
+    }
+    if aspect_ratio not in ratios or aspect_ratio == "1:1":
+        return None
+    w_ratio, h_ratio = ratios[aspect_ratio]
+    # Crop to largest centered rectangle of desired aspect ratio
+    return f"crop=min(iw\\,ih*{w_ratio}/{h_ratio}):min(ih\\,iw*{h_ratio}/{w_ratio})"
+
+
+def make_video(frames_dir, output_path, num_frames, duration_seconds, aspect_ratio="1:1"):
     """Stitch frames into an MP4 video using FFmpeg with target duration."""
     framerate = max(1, round(num_frames / max(1, duration_seconds)))
     framerate = min(framerate, 60)
 
-    print(f"  Video: {num_frames} frames, {duration_seconds}s target, {framerate} fps")  # no walk_id here
+    print(f"  Video: {num_frames} frames, {duration_seconds}s target, {framerate} fps, aspect={aspect_ratio}")
+
+    crop_filter = get_crop_filter(aspect_ratio)
+    vf_filters = []
+    if crop_filter:
+        vf_filters.append(crop_filter)
 
     cmd = [
         "ffmpeg", "-y",
         "-framerate", str(framerate),
         "-i", str(frames_dir / "%06d.jpg"),
+    ]
+    if vf_filters:
+        cmd += ["-vf", ",".join(vf_filters)]
+    cmd += [
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
         "-preset", "slow",
@@ -510,7 +534,7 @@ def main(walk_id):
         # 5. Make video with target duration
         framerate = max(1, min(60, round(len(existing) / max(1, duration_seconds))))
         log_message(walk_id, f"Creating video: {len(existing)} frames, {duration_seconds}s target, {framerate} fps")
-        make_video(frames_dir, video_path, len(existing), duration_seconds)
+        make_video(frames_dir, video_path, len(existing), duration_seconds, walk_aspect)
 
         update_walk_status(walk_id, "done", total_frames=len(existing), downloaded_frames=len(existing))
         log_message(walk_id, f"Done! Video saved: {video_path}")
