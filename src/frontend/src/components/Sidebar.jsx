@@ -70,6 +70,10 @@ export default function Sidebar({ open, onToggle }) {
             <span className="nav-icon">$</span>
             <span>Usage</span>
           </NavLink>
+          <NavLink to="/help" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            <span className="nav-icon">?</span>
+            <span>Help</span>
+          </NavLink>
           {isMobile && (
             <button className="nav-link" onClick={cycleTheme} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
               <span className="nav-icon">{ICONS[theme]}</span>
