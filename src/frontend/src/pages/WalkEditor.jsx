@@ -248,7 +248,7 @@ export default function WalkEditor() {
               onClick={handleSave}
               disabled={(isDraft && points.length < 2) || saving}
             >
-              {saving ? 'Saving...' : isEdit ? 'Save Changes' : 'Create Walk'}
+              {saving ? <><span className="btn-spinner"></span> Saving...</> : isEdit ? 'Save Changes' : 'Create Walk'}
             </button>
             <button className="btn-secondary" onClick={() => navigate(-1)}>
               Cancel

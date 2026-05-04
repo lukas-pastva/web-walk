@@ -31,14 +31,17 @@ function makeIcon(color) {
 
 function SearchControl({ onAddPoint }) {
   const map = useMap();
+  const [country, setCountry] = useState(null); // { name, code, lat, lon, boundingbox }
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const timeoutRef = useRef(null);
   const wrapperRef = useRef(null);
+  const inputRef = useRef(null);
 
-  // Disable Leaflet click propagation on the search container
+  const step = country ? 'place' : 'country';
+
   React.useEffect(() => {
     if (wrapperRef.current) {
       L.DomEvent.disableClickPropagation(wrapperRef.current);
@@ -46,7 +49,6 @@ function SearchControl({ onAddPoint }) {
     }
   }, []);
 
-  // Close dropdown on outside click
   React.useEffect(() => {
     const handler = (e) => {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
@@ -57,20 +59,35 @@ function SearchControl({ onAddPoint }) {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const doSearch = async (q) => {
-    if (!q || q.trim().length < 5) { setResults([]); setShowResults(false); return; }
+  const searchCountry = async (q) => {
+    if (!q || q.trim().length < 2) { setResults([]); setShowResults(false); return; }
     setSearching(true);
     try {
-      const bounds = map.getBounds();
-      const viewbox = `${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()},${bounds.getSouth()}`;
       const resp = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=7&viewbox=${viewbox}&bounded=0`
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=7&featuretype=country&addressdetails=1`
       );
       const data = await resp.json();
       setResults(data);
       setShowResults(data.length > 0);
     } catch (err) {
-      console.error('Search failed:', err);
+      console.error('Country search failed:', err);
+    }
+    setSearching(false);
+  };
+
+  const searchPlace = async (q) => {
+    if (!q || q.trim().length < 2) { setResults([]); setShowResults(false); return; }
+    setSearching(true);
+    try {
+      const countryCode = country.code ? `&countrycodes=${country.code}` : '';
+      const resp = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=7${countryCode}&addressdetails=1`
+      );
+      const data = await resp.json();
+      setResults(data);
+      setShowResults(data.length > 0);
+    } catch (err) {
+      console.error('Place search failed:', err);
     }
     setSearching(false);
   };
@@ -79,20 +96,43 @@ function SearchControl({ onAddPoint }) {
     const val = e.target.value;
     setQuery(val);
     clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => doSearch(val), 350);
+    const fn = step === 'country' ? searchCountry : searchPlace;
+    timeoutRef.current = setTimeout(() => fn(val), 350);
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
     clearTimeout(timeoutRef.current);
-    doSearch(query);
+    if (step === 'country') searchCountry(query);
+    else searchPlace(query);
   };
 
-  const handleSelect = (item) => {
-    map.setView([parseFloat(item.lat), parseFloat(item.lon)], 16);
+  const handleSelectCountry = (item) => {
+    const cc = item.address?.country_code?.toUpperCase() || '';
+    const name = item.address?.country || item.display_name.split(',')[0];
+    setCountry({ name, code: cc, lat: item.lat, lon: item.lon, boundingbox: item.boundingbox });
+    if (item.boundingbox) {
+      const bb = item.boundingbox.map(Number);
+      map.fitBounds([[bb[0], bb[2]], [bb[1], bb[3]]], { padding: [20, 20], maxZoom: 7 });
+    } else {
+      map.setView([parseFloat(item.lat), parseFloat(item.lon)], 6);
+    }
+    setQuery('');
     setResults([]);
     setShowResults(false);
-    setQuery(item.display_name.split(',').slice(0, 2).join(','));
+    setTimeout(() => inputRef.current?.focus(), 100);
+  };
+
+  const handleSelectPlace = (item) => {
+    if (item.boundingbox) {
+      const bb = item.boundingbox.map(Number);
+      map.fitBounds([[bb[0], bb[2]], [bb[1], bb[3]]], { padding: [30, 30], maxZoom: 16 });
+    } else {
+      map.setView([parseFloat(item.lat), parseFloat(item.lon)], 16);
+    }
+    setResults([]);
+    setShowResults(false);
+    setQuery(item.display_name.split(',').slice(0, 2).join(',').trim());
   };
 
   const handleAddPoint = (e, item) => {
@@ -102,72 +142,110 @@ function SearchControl({ onAddPoint }) {
     }
     setResults([]);
     setShowResults(false);
-    setQuery(item.display_name.split(',').slice(0, 2).join(','));
-    map.setView([parseFloat(item.lat), parseFloat(item.lon)], 16);
+    setQuery(item.display_name.split(',').slice(0, 2).join(',').trim());
+    if (item.boundingbox) {
+      const bb = item.boundingbox.map(Number);
+      map.fitBounds([[bb[0], bb[2]], [bb[1], bb[3]]], { padding: [30, 30], maxZoom: 16 });
+    } else {
+      map.setView([parseFloat(item.lat), parseFloat(item.lon)], 16);
+    }
+  };
+
+  const handleClearCountry = () => {
+    setCountry(null);
+    setQuery('');
+    setResults([]);
+    setShowResults(false);
+    setTimeout(() => inputRef.current?.focus(), 100);
   };
 
   const handleFocus = () => {
     if (results.length > 0) setShowResults(true);
   };
 
+  const handleKeyDown = (e) => {
+    if (e.key === 'Backspace' && query === '' && country) {
+      handleClearCountry();
+    }
+  };
+
+  const getTypeIcon = (item) => {
+    const t = (item.type || '').toLowerCase();
+    const c = (item.class || '').toLowerCase();
+    if (t === 'country' || t === 'state') return '\u{1F3F3}';
+    if (t === 'city' || t === 'town' || t === 'village' || t === 'hamlet') return '\u{1F3D8}';
+    if (c === 'highway' || c === 'road') return '\u{1F6E3}';
+    if (c === 'tourism' || c === 'leisure') return '\u{26F1}';
+    if (c === 'natural') return '\u{1F3D4}';
+    return '\u{1F4CD}';
+  };
+
   return (
-    <div ref={wrapperRef} className="map-search" style={{
-      position: 'absolute', top: 10, left: 50, zIndex: 1000,
-      background: 'white', borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-      padding: '6px 10px', maxWidth: 'calc(100% - 100px)',
-    }}>
-      <form onSubmit={handleSubmit} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+    <div ref={wrapperRef} className="search-control">
+      <form onSubmit={handleSubmit} className="search-form">
+        {country && (
+          <span className="search-country-tag" onClick={handleClearCountry} title="Click to change country">
+            <span className="search-country-tag-text">{country.code || country.name}</span>
+            <span className="search-country-tag-x">&times;</span>
+          </span>
+        )}
         <input
+          ref={inputRef}
           type="text"
           value={query}
           onChange={handleChange}
           onFocus={handleFocus}
-          placeholder="Type 5+ chars to search..."
-          style={{
-            border: '1px solid #ddd', borderRadius: 4, padding: '6px 10px',
-            fontSize: 14, width: 280, outline: 'none',
-          }}
+          onKeyDown={handleKeyDown}
+          placeholder={step === 'country' ? 'Country (e.g. Spain)...' : `Search in ${country.name}...`}
+          className="search-input"
         />
-        {searching && <span style={{ fontSize: 12, color: '#999' }}>...</span>}
+        {searching && (
+          <span className="search-spinner">
+            <span className="search-spinner-dot"></span>
+            <span className="search-spinner-dot"></span>
+            <span className="search-spinner-dot"></span>
+          </span>
+        )}
       </form>
-      {showResults && results.length > 0 && (
-        <ul style={{
-          listStyle: 'none', margin: '6px 0 0', padding: 0,
-          maxHeight: 240, overflow: 'auto',
-          borderTop: '1px solid #eee',
-        }}>
-          {results.map((r) => (
-            <li key={r.place_id} onClick={() => handleSelect(r)} style={{
-              padding: '8px 8px', cursor: 'pointer', fontSize: 13,
-              borderBottom: '1px solid #eee', lineHeight: 1.3,
-              display: 'flex', alignItems: 'center', gap: 8,
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = '#f0f4ff'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>
-                  {r.display_name.split(',').slice(0, 2).join(',')}
-                </div>
-                <div style={{ color: '#888', fontSize: 11, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {r.display_name.split(',').slice(2).join(',').trim()}
-                </div>
-              </div>
-              {onAddPoint && (
-                <button
-                  onClick={(e) => handleAddPoint(e, r)}
-                  style={{
-                    background: '#4a90d9', color: 'white', border: 'none',
-                    borderRadius: 4, padding: '4px 8px', cursor: 'pointer',
-                    fontSize: 16, fontWeight: 700, lineHeight: 1, flexShrink: 0,
-                  }}
-                  title="Add as waypoint"
-                >+</button>
-              )}
-            </li>
-          ))}
-        </ul>
+
+      {step === 'country' && !showResults && !searching && query === '' && (
+        <div className="search-hint">
+          <span className="search-hint-step">1</span> Start by picking a country
+        </div>
       )}
+      {step === 'place' && !showResults && !searching && query === '' && (
+        <div className="search-hint">
+          <span className="search-hint-step">2</span> Now search for a place
+        </div>
+      )}
+
+      <ul className={`search-results ${showResults && results.length > 0 ? 'search-results-visible' : ''}`}>
+        {results.map((r, idx) => (
+          <li
+            key={r.place_id}
+            className="search-result-item"
+            style={{ animationDelay: `${idx * 40}ms` }}
+            onClick={() => step === 'country' ? handleSelectCountry(r) : handleSelectPlace(r)}
+          >
+            <span className="search-result-icon">{getTypeIcon(r)}</span>
+            <div className="search-result-text">
+              <div className="search-result-name">
+                {r.display_name.split(',').slice(0, 2).join(',').trim()}
+              </div>
+              <div className="search-result-detail">
+                {r.display_name.split(',').slice(2).join(',').trim()}
+              </div>
+            </div>
+            {step === 'place' && onAddPoint && (
+              <button
+                onClick={(e) => handleAddPoint(e, r)}
+                className="search-add-btn"
+                title="Add as waypoint"
+              >+</button>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
