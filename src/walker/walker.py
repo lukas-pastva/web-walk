@@ -404,12 +404,19 @@ def get_crop_filter(aspect_ratio):
     return f"crop=min(iw\\,ih*{w_ratio}/{h_ratio}):min(ih\\,iw*{h_ratio}/{w_ratio})"
 
 
-def make_video(frames_dir, output_path, num_frames, duration_seconds, aspect_ratio="1:1"):
+def make_video(frames_dir, output_path, num_frames, duration_seconds, aspect_ratio="1:1", walk_id=None):
     """Stitch frames into an MP4 video using FFmpeg with target duration."""
     framerate = max(1, round(num_frames / max(1, duration_seconds)))
     framerate = min(framerate, 60)
 
-    print(f"  Video: {num_frames} frames, {duration_seconds}s target, {framerate} fps, aspect={aspect_ratio}")
+    log_message(walk_id, f"Video encoding: {num_frames} frames, {duration_seconds}s target, {framerate} fps, aspect={aspect_ratio}")
+
+    # Log frame file sizes for debugging
+    frame_files = sorted(frames_dir.glob("*.jpg"))
+    if frame_files:
+        sizes = [f.stat().st_size for f in frame_files[:5]]
+        log_message(walk_id, f"Sample frame sizes (first 5): {[f'{s//1024}KB' for s in sizes]}")
+        log_message(walk_id, f"Frame dimensions source: {frame_files[0]}")
 
     crop_filter = get_crop_filter(aspect_ratio)
     vf_filters = []
@@ -426,11 +433,35 @@ def make_video(frames_dir, output_path, num_frames, duration_seconds, aspect_rat
     cmd += [
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
+        "-profile:v", "high",
+        "-level", "4.1",
         "-preset", "slow",
-        "-crf", "0",
+        "-crf", "23",
+        "-movflags", "+faststart",
         str(output_path),
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
+
+    log_message(walk_id, f"FFmpeg command: {' '.join(cmd)}")
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.stdout:
+        log_message(walk_id, f"FFmpeg stdout: {result.stdout[-2000:]}")
+    if result.stderr:
+        # FFmpeg logs everything to stderr, log last 3000 chars
+        stderr_tail = result.stderr[-3000:]
+        log_message(walk_id, f"FFmpeg stderr: {stderr_tail}")
+
+    if result.returncode != 0:
+        log_message(walk_id, f"FFmpeg failed with exit code {result.returncode}", level="error")
+        raise Exception(f"FFmpeg failed (exit code {result.returncode}): {result.stderr[-500:]}")
+
+    # Log output file info
+    if output_path.exists():
+        size_mb = output_path.stat().st_size / (1024 * 1024)
+        log_message(walk_id, f"Video file created: {size_mb:.1f} MB")
+    else:
+        log_message(walk_id, "WARNING: Video file not found after FFmpeg!", level="error")
 
 
 def main(walk_id):
@@ -534,7 +565,7 @@ def main(walk_id):
         # 5. Make video with target duration
         framerate = max(1, min(60, round(len(existing) / max(1, duration_seconds))))
         log_message(walk_id, f"Creating video: {len(existing)} frames, {duration_seconds}s target, {framerate} fps")
-        make_video(frames_dir, video_path, len(existing), duration_seconds, walk_aspect)
+        make_video(frames_dir, video_path, len(existing), duration_seconds, walk_aspect, walk_id)
 
         update_walk_status(walk_id, "done", total_frames=len(existing), downloaded_frames=len(existing))
         log_message(walk_id, f"Done! Video saved: {video_path}")
