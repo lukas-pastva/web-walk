@@ -58,7 +58,7 @@ app.get('/api/walks/:id', async (req, res) => {
 
 // Create walk
 app.post('/api/walks', async (req, res) => {
-  const { name, duration_seconds, heading_offset, pitch, fov, aspect_ratio, points } = req.body;
+  const { name, duration_seconds, heading_offset, pitch, fov, aspect_ratio, direction, points } = req.body;
   if (!points || points.length < 2) {
     return res.status(400).json({ error: 'At least 2 points required' });
   }
@@ -68,9 +68,9 @@ app.post('/api/walks', async (req, res) => {
   try {
     await conn.beginTransaction();
     await conn.query(
-      `INSERT INTO walks (id, name, duration_seconds, heading_offset, pitch, fov, aspect_ratio, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
-      [id, name || 'Untitled Walk', duration_seconds || 60, heading_offset || 0, pitch || 0, fov || 90, aspect_ratio || '1:1']
+      `INSERT INTO walks (id, name, duration_seconds, heading_offset, pitch, fov, aspect_ratio, direction, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+      [id, name || 'Untitled Walk', duration_seconds || 60, heading_offset || 0, pitch || 0, fov || 90, aspect_ratio || '1:1', direction || 'forward']
     );
     for (let i = 0; i < points.length; i++) {
       await conn.query(
@@ -100,15 +100,16 @@ app.put('/api/walks/:id', async (req, res) => {
     const walk = walks[0];
     const isDraft = walk.status === 'draft';
 
-    const { name, duration_seconds, heading_offset, pitch, fov, aspect_ratio, points } = req.body;
+    const { name, duration_seconds, heading_offset, pitch, fov, aspect_ratio, direction, points } = req.body;
 
     // Non-draft walks: only allow name, duration, aspect_ratio changes
-    if (!isDraft && (points || heading_offset !== undefined || pitch !== undefined || fov !== undefined)) {
+    if (!isDraft && (points || heading_offset !== undefined || pitch !== undefined || fov !== undefined || direction !== undefined)) {
       // Check if route/camera params actually changed
       const routeChanged = !!points;
       const cameraChanged = (heading_offset !== undefined && heading_offset !== walk.heading_offset) ||
                             (pitch !== undefined && pitch !== walk.pitch) ||
-                            (fov !== undefined && fov !== walk.fov);
+                            (fov !== undefined && fov !== walk.fov) ||
+                            (direction !== undefined && direction !== walk.direction);
       if (routeChanged || cameraChanged) {
         return res.status(400).json({ error: 'Route and camera settings can only be changed on draft walks. Use Reprocess first.' });
       }
@@ -118,7 +119,7 @@ app.put('/api/walks/:id', async (req, res) => {
     try {
       await conn.beginTransaction();
       await conn.query(
-        `UPDATE walks SET name = ?, duration_seconds = ?, heading_offset = ?, pitch = ?, fov = ?, aspect_ratio = ?,
+        `UPDATE walks SET name = ?, duration_seconds = ?, heading_offset = ?, pitch = ?, fov = ?, aspect_ratio = ?, direction = ?,
          updated_at = NOW() WHERE id = ?`,
         [
           name || walk.name,
@@ -127,6 +128,7 @@ app.put('/api/walks/:id', async (req, res) => {
           pitch ?? walk.pitch ?? 0,
           fov ?? walk.fov ?? 90,
           aspect_ratio || walk.aspect_ratio || '1:1',
+          direction || walk.direction || 'forward',
           req.params.id,
         ]
       );
@@ -437,6 +439,7 @@ app.get('/api/walks/:id/estimate-cache', async (req, res) => {
     const fov = Math.round(walk.fov || 90);
     const headingOffset = walk.heading_offset || 0;
     const aspectRatio = walk.aspect_ratio || '1:1';
+    const walkDirection = walk.direction || 'forward';
 
     // Determine image size based on aspect ratio (same logic as walker)
     const SIGNING = !!(process.env.GOOGLE_SIGNING_SECRET);
@@ -464,16 +467,19 @@ app.get('/api/walks/:id/estimate-cache', async (req, res) => {
       return (Math.atan2(x, y) * 180 / Math.PI + 360) % 360;
     };
 
+    // Reverse points if direction is reverse
+    const orderedPoints = walkDirection === 'reverse' ? [...points].reverse() : points;
+
     // Generate estimated points along straight-line segments
     const estPoints = [];
-    for (let i = 0; i < points.length - 1; i++) {
-      const d = haversine(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng) * 1.4;
+    for (let i = 0; i < orderedPoints.length - 1; i++) {
+      const d = haversine(orderedPoints[i].lat, orderedPoints[i].lng, orderedPoints[i + 1].lat, orderedPoints[i + 1].lng) * 1.4;
       const numPts = Math.ceil(d / 15);
       for (let j = 0; j <= numPts; j++) {
         const frac = numPts > 0 ? j / numPts : 0;
-        const lat = points[i].lat + frac * (points[i + 1].lat - points[i].lat);
-        const lng = points[i].lng + frac * (points[i + 1].lng - points[i].lng);
-        const hdg = Math.round((bearing(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng) + headingOffset + 360) % 360);
+        const lat = orderedPoints[i].lat + frac * (orderedPoints[i + 1].lat - orderedPoints[i].lat);
+        const lng = orderedPoints[i].lng + frac * (orderedPoints[i + 1].lng - orderedPoints[i].lng);
+        const hdg = Math.round((bearing(orderedPoints[i].lat, orderedPoints[i].lng, orderedPoints[i + 1].lat, orderedPoints[i + 1].lng) + headingOffset + 360) % 360);
         estPoints.push({ lat: parseFloat(lat.toFixed(5)), lng: parseFloat(lng.toFixed(5)), hdg });
       }
     }

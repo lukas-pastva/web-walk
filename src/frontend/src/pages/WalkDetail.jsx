@@ -331,6 +331,10 @@ export default function WalkDetail() {
               <span>{walk.points?.length || 0}</span>
             </div>
             <div className="info-row">
+              <span className="info-label">Direction</span>
+              <span>{walk.direction === 'reverse' ? 'B → A (Reverse)' : 'A → B (Forward)'}</span>
+            </div>
+            <div className="info-row">
               <span className="info-label">Heading</span>
               <span>{walk.heading_offset || 0}°</span>
             </div>

@@ -476,10 +476,11 @@ def main(walk_id):
     walk_pitch = walk.get("pitch", 0)
     walk_fov = walk.get("fov", 90)
     walk_aspect = walk.get("aspect_ratio", "1:1")
+    walk_direction = walk.get("direction", "forward")
     walk_image_size = get_image_size(walk_aspect)
 
     log_message(walk_id, f"Starting walk processing: {walk.get('name', 'Untitled')}")
-    log_message(walk_id, f"Settings: duration={duration_seconds}s, heading_offset={heading_offset}, pitch={walk_pitch}, fov={walk_fov}, aspect={walk_aspect}")
+    log_message(walk_id, f"Settings: duration={duration_seconds}s, heading_offset={heading_offset}, pitch={walk_pitch}, fov={walk_fov}, aspect={walk_aspect}, direction={walk_direction}")
     log_message(walk_id, f"Image size: {walk_image_size} ({'signed URLs' if SIGNING_SECRET else 'unsigned'})")
     log_message(walk_id, f"Waypoints: {len(points)}")
     update_walk_status(walk_id, "processing")
@@ -490,6 +491,11 @@ def main(walk_id):
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
+        # Reverse waypoints if direction is 'reverse'
+        if walk_direction == "reverse":
+            points = list(reversed(points))
+            log_message(walk_id, "Direction: reverse - waypoints reversed for B->A route")
+
         # 1. Get multi-segment route
         log_message(walk_id, f"Getting directions for {len(points)} waypoints...")
         check_rate_limit(walk_id, len(points) - 1, "directions")

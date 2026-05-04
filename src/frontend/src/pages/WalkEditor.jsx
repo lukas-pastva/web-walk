@@ -13,6 +13,7 @@ export default function WalkEditor() {
   const [pitch, setPitch] = useState(0);
   const [fov, setFov] = useState(90);
   const [aspectRatio, setAspectRatio] = useState('1:1');
+  const [direction, setDirection] = useState('forward');
   const [points, setPoints] = useState([]);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(isEdit);
@@ -31,6 +32,7 @@ export default function WalkEditor() {
           setPitch(walk.pitch || 0);
           setFov(walk.fov || 90);
           setAspectRatio(walk.aspect_ratio || '1:1');
+          setDirection(walk.direction || 'forward');
           setOriginalAspectRatio(walk.aspect_ratio || '1:1');
           setOriginalDuration(walk.duration_seconds);
           setPoints(walk.points.map((p) => ({ lat: p.lat, lng: p.lng })));
@@ -47,6 +49,7 @@ export default function WalkEditor() {
           if (s.default_pitch) setPitch(Number(s.default_pitch));
           if (s.default_fov) setFov(Number(s.default_fov));
           if (s.default_aspect_ratio) setAspectRatio(s.default_aspect_ratio);
+          if (s.default_direction) setDirection(s.default_direction);
         })
         .catch(() => {});
     }
@@ -77,6 +80,7 @@ export default function WalkEditor() {
       body.heading_offset = parseFloat(headingOffset) || 0;
       body.pitch = parseFloat(pitch) || 0;
       body.fov = parseFloat(fov) || 90;
+      body.direction = direction;
       body.points = points;
     }
 
@@ -92,6 +96,7 @@ export default function WalkEditor() {
         body.heading_offset = parseFloat(headingOffset) || 0;
         body.pitch = parseFloat(pitch) || 0;
         body.fov = parseFloat(fov) || 90;
+        body.direction = direction;
         body.points = points;
         resp = await fetch('/api/walks', {
           method: 'POST',
@@ -171,6 +176,29 @@ export default function WalkEditor() {
 
           {isDraft && (
             <>
+              <div className="form-group">
+                <label>Direction</label>
+                <div className="aspect-ratio-options">
+                  <button
+                    type="button"
+                    className={`aspect-btn ${direction === 'forward' ? 'active' : ''}`}
+                    onClick={() => setDirection('forward')}
+                  >
+                    A → B
+                  </button>
+                  <button
+                    type="button"
+                    className={`aspect-btn ${direction === 'reverse' ? 'active' : ''}`}
+                    onClick={() => setDirection('reverse')}
+                  >
+                    B → A
+                  </button>
+                </div>
+                <span className="form-hint">
+                  {direction === 'forward' ? 'Walk from first to last waypoint' : 'Walk from last to first waypoint (reversed)'}
+                </span>
+              </div>
+
               <div className="form-group">
                 <label>Heading Offset ({headingOffset}°)</label>
                 <input
