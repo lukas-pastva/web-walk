@@ -510,6 +510,46 @@ app.get('/api/walks/:id/estimate-cache', async (req, res) => {
   }
 });
 
+// --- Cached Images browsing ---
+
+app.get('/api/cache/images', async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
+    const offset = (page - 1) * limit;
+
+    const [countRows] = await pool.query('SELECT COUNT(*) as total FROM streetview_cache');
+    const total = countRows[0].total;
+
+    const [rows] = await pool.query(
+      'SELECT id, lat_key, lng_key, heading_key, pitch, fov, size, file_path, file_size, created_at FROM streetview_cache ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      [limit, offset]
+    );
+
+    res.json({
+      images: rows,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Serve a cached image file
+app.get('/api/cache/images/:id/file', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT file_path FROM streetview_cache WHERE id = ?', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Image not found' });
+    const filePath = rows[0].file_path;
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File missing from disk' });
+    res.sendFile(filePath);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // SPA fallback
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../../frontend/dist/index.html'));

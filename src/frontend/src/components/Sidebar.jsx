@@ -66,6 +66,10 @@ export default function Sidebar({ open, onToggle }) {
             <span className="nav-icon">&#9654;</span>
             <span>Gallery</span>
           </NavLink>
+          <NavLink to="/cache" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            <span className="nav-icon">&#128444;</span>
+            <span>Cache</span>
+          </NavLink>
           <NavLink to="/usage" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
             <span className="nav-icon">$</span>
             <span>Usage</span>
